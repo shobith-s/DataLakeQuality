@@ -5,6 +5,8 @@ type QualityReport = {
   quality_score: number;
   quality_label: string;
   status: string;
+  pipeline_passed: boolean;
+  policy_failures: string[];
   summary: {
     row_count: number;
     column_count: number;
@@ -167,7 +169,7 @@ function App() {
       </h1>
       <p style={{ marginBottom: "1.5rem", color: "#9ca3af" }}>
         Upload a CSV, run the quality gate, and see trust score, contract issues, PII,
-        outliers, drift, and suggested data contracts in one view.
+        outliers, drift, policy gate status, and suggested data contracts in one view.
       </p>
 
       {/* Input panel */}
@@ -371,6 +373,16 @@ function App() {
                     Drift detected:{" "}
                     <strong>{report.summary.has_drift ? "YES" : "NO"}</strong>
                   </li>
+                  <li>
+                    Pipeline status:{" "}
+                    <strong
+                      style={{
+                        color: report.pipeline_passed ? "#16a34a" : "#dc2626",
+                      }}
+                    >
+                      {report.pipeline_passed ? "PASSED" : "FAILED"}
+                    </strong>
+                  </li>
                 </ul>
               </div>
             </div>
@@ -535,7 +547,9 @@ function App() {
                             ? c.current_mean.toFixed(2)
                             : c.current_mean}{" "}
                           {c.relative_change != null &&
-                            `(change: ${(c.relative_change * 100).toFixed(1)}%)`}
+                            `(change: ${(c.relative_change * 100).toFixed(1)}%)`}{" "}
+                          {c.psi != null &&
+                            `(PSI: ${c.psi.toFixed(3)}, ${c.psi_severity})`}
                         </li>
                       ))}
                     {report.drift.columns.filter((c: any) => c.drift).length === 0 && (
@@ -622,6 +636,35 @@ function App() {
               )}
             </div>
           </div>
+
+          {/* Policy failures panel */}
+          {!report.pipeline_passed && report.policy_failures.length > 0 && (
+            <div
+              style={{
+                marginTop: "1.5rem",
+                padding: "1rem",
+                borderRadius: "0.75rem",
+                background: "#111827",
+                border: "1px solid #7f1d1d",
+              }}
+            >
+              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#fecaca" }}>
+                Policy Gate Failures
+              </h2>
+              <ul
+                style={{
+                  margin: 0,
+                  paddingLeft: "1.2rem",
+                  fontSize: "0.875rem",
+                  color: "#fecaca",
+                }}
+              >
+                {report.policy_failures.map((line, idx) => (
+                  <li key={idx}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Optional raw JSON for debugging */}
           <details style={{ marginTop: "1.5rem" }}>

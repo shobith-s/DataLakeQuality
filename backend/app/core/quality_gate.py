@@ -1,12 +1,14 @@
 # app/core/quality_gate.py
 from datetime import datetime
 from typing import Any, Dict
-from app.core.explain import build_explanations
-from app.core.autofix import build_recommendations
 
 import pandas as pd
 
-from app.core.contracts import load_contract, validate_contract
+from app.core.contracts import (
+    load_contract,
+    validate_contract,
+    evaluate_policy,
+)
 from app.core.drift import analyze_drift
 from app.core.outliers import detect_outliers
 from app.core.pii import detect_pii
@@ -33,12 +35,11 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
     basic_profile = profile["basic_profile"]
 
     # Extract key values used by other checks / scoring
-    n_rows = summary["row_count"]
-    n_cols = summary["column_count"]
     missing_ratio = summary["missing_ratio"]
     duplicate_ratio = summary["duplicate_ratio"]
     # Frontend already expects this field inside basic_profile
     missing_by_column = basic_profile["missing_by_column"]
+    _ = missing_by_column  # currently unused here, but kept for clarity
 
     # 2) Contract checks
     contract_obj = load_contract(dataset_name)
@@ -68,7 +69,7 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
     outliers_result = detect_outliers(df)
     overall_outlier_ratio = outliers_result.get("overall_outlier_ratio", 0.0)
 
-    # 5) Drift
+    # 5) Drift (PSI-lite)
     drift_result = analyze_drift(dataset_name, df)
     has_drift = bool(drift_result.get("has_drift", False))
 
@@ -83,7 +84,6 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
     )
 
     # Merge profiling summary with quality-specific extra fields
-    # (so frontend summary remains compatible)
     summary_extended = {
         **summary,
         "pii_column_count": pii_column_count,
@@ -91,7 +91,21 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         "overall_outlier_ratio": overall_outlier_ratio,
         "has_drift": has_drift,
     }
-        # 7) Explanations & recommendations
+
+    # 7) Policy evaluation (pipeline gate)
+    policy_result = evaluate_policy(
+        contract=contract_obj,
+        quality_score=score_obj["score"],
+        summary=summary_extended,
+        drift=drift_result,
+    )
+    pipeline_passed = policy_result["pipeline_passed"]
+    policy_failures = policy_result["failures"]
+
+    # 8) Explanations & recommendations
+    from app.core.explain import build_explanations
+    from app.core.autofix import build_recommendations
+
     explanations = build_explanations(
         summary_extended,
         contract_result,
@@ -109,22 +123,22 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         drift_result,
     )
 
-
     report: Dict[str, Any] = {
         "dataset_name": dataset_name,
         "quality_score": score_obj["score"],
         "quality_label": score_obj["label"],
         "status": score_obj["label"],
+        "pipeline_passed": pipeline_passed,
+        "policy_failures": policy_failures,
         "summary": summary_extended,
         "basic_profile": basic_profile,
         "contract": contract_result,
         "pii": pii_result,
         "outliers": outliers_result,
         "drift": drift_result,
-        "explanations": explanations,          # NEW
-        "recommendations": recommendations,    # NEW
+        "explanations": explanations,
+        "recommendations": recommendations,
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
-
 
     return report

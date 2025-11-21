@@ -10,6 +10,9 @@ class QualityReport(BaseModel):
     quality_label: str
     status: str
 
+    pipeline_passed: bool
+    policy_failures: List[str]
+
     summary: Dict[str, Any]
     basic_profile: Dict[str, Any]
     contract: Dict[str, Any]
@@ -17,7 +20,7 @@ class QualityReport(BaseModel):
     outliers: Dict[str, Any]
     drift: Dict[str, Any]
 
-    explanations: List[str]        # NEW
-    recommendations: List[str]     # NEW
+    explanations: List[str]
+    recommendations: List[str]
 
     generated_at: str
