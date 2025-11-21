@@ -1,0 +1,11 @@
+dataset_name: customers
+required_columns:
+  - customer_id
+  - email
+  - signup_date
+column_types:
+  customer_id: integer
+  email: string
+  signup_date: date
+unique_keys:
+  - customer_id
