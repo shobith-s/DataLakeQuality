@@ -208,12 +208,12 @@ function App() {
       type: "text/x-python;charset=utf-8",
     });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
     const safeName =
       report.dataset_name && report.dataset_name.trim().length > 0
         ? report.dataset_name.trim().replace(/[^a-zA-Z0-9_-]+/g, "_")
         : "dataset";
+    const a = document.createElement("a");
+    a.href = url;
     a.download = `${safeName}_autofix.py`;
     document.body.appendChild(a);
     a.click();
