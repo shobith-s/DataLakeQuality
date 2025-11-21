@@ -8,6 +8,7 @@ from app.core.contracts import load_contract, validate_contract
 from app.core.drift import analyze_drift
 from app.core.outliers import detect_outliers
 from app.core.pii import detect_pii
+from app.core.profiling import profile_dataset
 from app.core.scoring import compute_quality_score
 from app.utils.io import load_csv
 
@@ -16,6 +17,7 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
     """
     High-level orchestrator: run all checks and produce a consolidated report dict.
     """
+    # Normalize path to str for loader
     if not isinstance(csv_path, str):
         path_str = str(csv_path)
     else:
@@ -23,22 +25,20 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
 
     df: pd.DataFrame = load_csv(path_str)
 
-    n_rows, n_cols = df.shape
+    # 1) Profiling: central place for basic stats
+    profile = profile_dataset(df)
+    summary = profile["summary"]
+    basic_profile = profile["basic_profile"]
 
-    # Missing + duplicates
-    total_cells = n_rows * n_cols if n_rows and n_cols else 1
-    total_missing = int(df.isna().sum().sum())
-    missing_ratio = total_missing / total_cells
+    # Extract key values used by other checks / scoring
+    n_rows = summary["row_count"]
+    n_cols = summary["column_count"]
+    missing_ratio = summary["missing_ratio"]
+    duplicate_ratio = summary["duplicate_ratio"]
+    # Frontend already expects this field inside basic_profile
+    missing_by_column = basic_profile["missing_by_column"]
 
-    duplicate_rows = int(df.duplicated().sum())
-    duplicate_ratio = duplicate_rows / n_rows if n_rows > 0 else 0.0
-
-    # Column-level missing stats (for UI)
-    missing_by_column = (
-        df.isna().sum().astype(int).to_dict() if n_cols > 0 else {}
-    )
-
-    # Contract checks
+    # 2) Contract checks
     contract_obj = load_contract(dataset_name)
     if contract_obj is None:
         contract_result = {
@@ -49,7 +49,7 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
             "passed": False,
             "note": "No contract found for this dataset; treated as warning.",
         }
-        contract_violations = 0  # we’ll penalize lightly via summary if needed
+        contract_violations = 0
     else:
         contract_result = validate_contract(df, contract_obj)
         contract_violations = (
@@ -58,19 +58,19 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
             + len(contract_result["unique_violations"])
         )
 
-    # PII
+    # 3) PII
     pii_result = detect_pii(df)
     pii_column_count = pii_result.get("pii_column_count", 0)
 
-    # Outliers
+    # 4) Outliers
     outliers_result = detect_outliers(df)
     overall_outlier_ratio = outliers_result.get("overall_outlier_ratio", 0.0)
 
-    # Drift
+    # 5) Drift
     drift_result = analyze_drift(dataset_name, df)
     has_drift = bool(drift_result.get("has_drift", False))
 
-    # Score
+    # 6) Score
     score_obj = compute_quality_score(
         missing_ratio=missing_ratio,
         duplicate_ratio=duplicate_ratio,
@@ -80,13 +80,10 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         has_drift=has_drift,
     )
 
-    summary = {
-        "row_count": n_rows,
-        "column_count": n_cols,
-        "total_missing_cells": total_missing,
-        "missing_ratio": missing_ratio,
-        "duplicate_rows": duplicate_rows,
-        "duplicate_ratio": duplicate_ratio,
+    # Merge profiling summary with quality-specific extra fields
+    # (so frontend summary remains compatible)
+    summary_extended = {
+        **summary,
         "pii_column_count": pii_column_count,
         "contract_violations": contract_violations,
         "overall_outlier_ratio": overall_outlier_ratio,
@@ -98,10 +95,8 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         "quality_score": score_obj["score"],
         "quality_label": score_obj["label"],
         "status": score_obj["label"],
-        "summary": summary,
-        "basic_profile": {
-            "missing_by_column": missing_by_column,
-        },
+        "summary": summary_extended,
+        "basic_profile": basic_profile,
         "contract": contract_result,
         "pii": pii_result,
         "outliers": outliers_result,
