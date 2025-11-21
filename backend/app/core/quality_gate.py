@@ -1,6 +1,8 @@
 # app/core/quality_gate.py
 from datetime import datetime
 from typing import Any, Dict
+from app.core.explain import build_explanations
+from app.core.autofix import build_recommendations
 
 import pandas as pd
 
@@ -89,6 +91,24 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         "overall_outlier_ratio": overall_outlier_ratio,
         "has_drift": has_drift,
     }
+        # 7) Explanations & recommendations
+    explanations = build_explanations(
+        summary_extended,
+        contract_result,
+        pii_result,
+        outliers_result,
+        drift_result,
+    )
+
+    recommendations = build_recommendations(
+        summary_extended,
+        basic_profile,
+        contract_result,
+        pii_result,
+        outliers_result,
+        drift_result,
+    )
+
 
     report: Dict[str, Any] = {
         "dataset_name": dataset_name,
@@ -101,7 +121,10 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         "pii": pii_result,
         "outliers": outliers_result,
         "drift": drift_result,
+        "explanations": explanations,          # NEW
+        "recommendations": recommendations,    # NEW
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
+
 
     return report

@@ -1,5 +1,5 @@
 # app/models/report.py
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import BaseModel
 
@@ -9,10 +9,15 @@ class QualityReport(BaseModel):
     quality_score: float
     quality_label: str
     status: str
+
     summary: Dict[str, Any]
     basic_profile: Dict[str, Any]
     contract: Dict[str, Any]
     pii: Dict[str, Any]
     outliers: Dict[str, Any]
     drift: Dict[str, Any]
+
+    explanations: List[str]        # NEW
+    recommendations: List[str]     # NEW
+
     generated_at: str
