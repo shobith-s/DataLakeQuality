@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.venv/
+.env
+
+# Virtualenv / Poetry
+.env/
+.venv/
+venv/
+ENV/
+env/
+
+# Node
+node_modules/
+dist/
+.build/
+.eslintcache
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data/baselines (we’ll decide case-by-case)
+data/*.csv
+baselines/*.json
+
