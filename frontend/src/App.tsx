@@ -19,6 +19,8 @@ type QualityReport = {
   };
   basic_profile: {
     missing_by_column: Record<string, number>;
+    inferred_types?: Record<string, string>;
+    column_stats?: Record<string, any>;
   };
   contract: any;
   pii: {
@@ -41,6 +43,8 @@ type QualityReport = {
     overall_outlier_ratio: number;
   };
   drift: any;
+  explanations: string[];
+  recommendations: string[];
   generated_at: string;
 };
 
@@ -194,150 +198,307 @@ function App() {
         </div>
       )}
 
-      {/* Report area */}
+      {/* Main report area */}
       {report && (
-        <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "2fr 3fr" }}>
-          {/* Left: score + summary */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <div
-              style={{
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                    Quality score
+        <>
+          <div
+            style={{
+              display: "grid",
+              gap: "1rem",
+              gridTemplateColumns: "2fr 3fr",
+            }}
+          >
+            {/* Left: score + summary */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                      Quality score
+                    </div>
+                    <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>
+                      {report.quality_score.toFixed(1)}
+                    </div>
                   </div>
-                  <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>
-                    {report.quality_score.toFixed(1)}
+                  <div
+                    style={{
+                      alignSelf: "center",
+                      padding: "0.3rem 0.75rem",
+                      borderRadius: "999px",
+                      background: getLabelColor(report.quality_label) + "22",
+                      color: getLabelColor(report.quality_label),
+                      fontWeight: 600,
+                      fontSize: "0.875rem",
+                    }}
+                  >
+                    {report.quality_label}
                   </div>
                 </div>
                 <div
                   style={{
-                    alignSelf: "center",
-                    padding: "0.3rem 0.75rem",
-                    borderRadius: "999px",
-                    background: getLabelColor(report.quality_label) + "22",
-                    color: getLabelColor(report.quality_label),
-                    fontWeight: 600,
+                    marginTop: "0.5rem",
                     fontSize: "0.875rem",
+                    color: "#9ca3af",
                   }}
                 >
-                  {report.quality_label}
+                  Dataset:{" "}
+                  <span style={{ color: "#e5e7eb" }}>{report.dataset_name}</span>
+                </div>
+                <div
+                  style={{
+                    fontSize: "0.75rem",
+                    color: "#6b7280",
+                    marginTop: "0.25rem",
+                  }}
+                >
+                  Generated at: {new Date(report.generated_at).toLocaleString()}
                 </div>
               </div>
-              <div style={{ marginTop: "0.5rem", fontSize: "0.875rem", color: "#9ca3af" }}>
-                Dataset: <span style={{ color: "#e5e7eb" }}>{report.dataset_name}</span>
-              </div>
-              <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: "0.25rem" }}>
-                Generated at: {new Date(report.generated_at).toLocaleString()}
-              </div>
-            </div>
 
-            <div
-              style={{
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-              }}
-            >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Summary</h2>
-              <ul
+              <div
                 style={{
-                  listStyle: "none",
-                  padding: 0,
-                  margin: 0,
-                  fontSize: "0.875rem",
-                  display: "grid",
-                  gap: "0.25rem",
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
                 }}
               >
-                <li>
-                  Rows: <strong>{report.summary.row_count}</strong> · Columns:{" "}
-                  <strong>{report.summary.column_count}</strong>
-                </li>
-                <li>
-                  Missing cells:{" "}
-                  <strong>{report.summary.total_missing_cells}</strong> (
-                  {formatPercent(report.summary.missing_ratio)})
-                </li>
-                <li>
-                  Duplicate rows: <strong>{report.summary.duplicate_rows}</strong> (
-                  {formatPercent(report.summary.duplicate_ratio)})
-                </li>
-                <li>
-                  PII columns: <strong>{report.summary.pii_column_count}</strong>
-                </li>
-                <li>
-                  Outlier ratio:{" "}
-                  <strong>{formatPercent(report.summary.overall_outlier_ratio)}</strong>
-                </li>
-                <li>
-                  Contract violations:{" "}
-                  <strong>{report.summary.contract_violations}</strong>
-                </li>
-                <li>
-                  Drift detected:{" "}
-                  <strong>{report.summary.has_drift ? "YES" : "NO"}</strong>
-                </li>
-              </ul>
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Summary</h2>
+                <ul
+                  style={{
+                    listStyle: "none",
+                    padding: 0,
+                    margin: 0,
+                    fontSize: "0.875rem",
+                    display: "grid",
+                    gap: "0.25rem",
+                  }}
+                >
+                  <li>
+                    Rows: <strong>{report.summary.row_count}</strong> · Columns:{" "}
+                    <strong>{report.summary.column_count}</strong>
+                  </li>
+                  <li>
+                    Missing cells:{" "}
+                    <strong>{report.summary.total_missing_cells}</strong> (
+                    {formatPercent(report.summary.missing_ratio)})
+                  </li>
+                  <li>
+                    Duplicate rows: <strong>{report.summary.duplicate_rows}</strong> (
+                    {formatPercent(report.summary.duplicate_ratio)})
+                  </li>
+                  <li>
+                    PII columns: <strong>{report.summary.pii_column_count}</strong>
+                  </li>
+                  <li>
+                    Outlier ratio:{" "}
+                    <strong>{formatPercent(report.summary.overall_outlier_ratio)}</strong>
+                  </li>
+                  <li>
+                    Contract violations:{" "}
+                      <strong>{report.summary.contract_violations}</strong>
+                  </li>
+                  <li>
+                    Drift detected:{" "}
+                    <strong>{report.summary.has_drift ? "YES" : "NO"}</strong>
+                  </li>
+                </ul>
+              </div>
             </div>
-          </div>
 
-          {/* Right: details panels */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            {/* Contract panel */}
-            <div
-              style={{
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-              }}
-            >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Contract</h2>
-              {report.contract.note && (
-                <p style={{ fontSize: "0.8rem", color: "#fbbf24" }}>
-                  {report.contract.note}
-                </p>
-              )}
-              <div style={{ fontSize: "0.875rem" }}>
-                <p>
-                  Status:{" "}
-                  <strong style={{ color: report.contract.passed ? "#16a34a" : "#f97316" }}>
-                    {report.contract.passed ? "Passed" : "Issues found"}
-                  </strong>
-                </p>
-                <p>
-                  Required columns missing:{" "}
-                  <strong>
-                    {report.contract.required_columns.missing.length > 0
-                      ? report.contract.required_columns.missing.join(", ")
-                      : "None"}
-                  </strong>
-                </p>
-                {report.contract.type_mismatches.length > 0 && (
-                  <div>
-                    <p>Type mismatches:</p>
-                    <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
-                      {report.contract.type_mismatches.map((m: any, idx: number) => (
+            {/* Right: details panels */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {/* Contract panel */}
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
+                }}
+              >
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Contract</h2>
+                {report.contract.note && (
+                  <p style={{ fontSize: "0.8rem", color: "#fbbf24" }}>
+                    {report.contract.note}
+                  </p>
+                )}
+                <div style={{ fontSize: "0.875rem" }}>
+                  <p>
+                    Status:{" "}
+                    <strong
+                      style={{
+                        color: report.contract.passed ? "#16a34a" : "#f97316",
+                      }}
+                    >
+                      {report.contract.passed ? "Passed" : "Issues found"}
+                    </strong>
+                  </p>
+                  <p>
+                    Required columns missing:{" "}
+                    <strong>
+                      {report.contract.required_columns.missing.length > 0
+                        ? report.contract.required_columns.missing.join(", ")
+                        : "None"}
+                    </strong>
+                  </p>
+                  {report.contract.type_mismatches.length > 0 && (
+                    <div>
+                      <p>Type mismatches:</p>
+                      <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
+                        {report.contract.type_mismatches.map(
+                          (m: any, idx: number) => (
+                            <li key={idx}>
+                              {m.column}: expected <code>{m.expected}</code>, actual{" "}
+                              <code>{m.actual}</code>
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* PII panel */}
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
+                }}
+              >
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+                  PII Detection
+                </h2>
+                {report.pii.has_pii ? (
+                  <ul
+                    style={{
+                      margin: 0,
+                      paddingLeft: "1.2rem",
+                      fontSize: "0.875rem",
+                    }}
+                  >
+                    {report.pii.pii_columns.map((c, idx) => (
+                      <li key={idx}>
+                        <strong>{c.column}</strong> → {c.detected_types.join(", ")}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                    No PII detected.
+                  </p>
+                )}
+              </div>
+
+              {/* Outliers panel */}
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
+                }}
+              >
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Outliers</h2>
+                {report.outliers.columns.length === 0 ? (
+                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                    No numeric columns or no outliers detected.
+                  </p>
+                ) : (
+                  <ul
+                    style={{
+                      margin: 0,
+                      paddingLeft: "1.2rem",
+                      fontSize: "0.875rem",
+                    }}
+                  >
+                    {report.outliers.columns
+                      .slice()
+                      .sort((a, b) => b.outlier_ratio - a.outlier_ratio)
+                      .slice(0, 5)
+                      .map((col, idx) => (
                         <li key={idx}>
-                          {m.column}: expected <code>{m.expected}</code>, actual{" "}
-                          <code>{m.actual}</code>
+                          <strong>{col.column}</strong> – outliers:{" "}
+                          {col.outlier_count} ({formatPercent(col.outlier_ratio)}) [
+                          {col.severity}]
                         </li>
                       ))}
-                    </ul>
-                  </div>
+                  </ul>
+                )}
+              </div>
+
+              {/* Drift panel */}
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid "#1f2937",
+                }}
+              >
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Drift</h2>
+                {report.drift.baseline_created ? (
+                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                    Baseline created for this dataset. Re-run with a newer version to see
+                    drift analysis.
+                  </p>
+                ) : report.drift.columns && report.drift.columns.length > 0 ? (
+                  <ul
+                    style={{
+                      margin: 0,
+                      paddingLeft: "1.2rem",
+                      fontSize: "0.875rem",
+                    }}
+                  >
+                    {report.drift.columns
+                      .filter((c: any) => c.drift)
+                      .map((c: any, idx: number) => (
+                        <li key={idx}>
+                          <strong>{c.column}</strong> – baseline mean:{" "}
+                          {c.baseline_mean?.toFixed
+                            ? c.baseline_mean.toFixed(2)
+                            : c.baseline_mean}{" "}
+                          → current:{" "}
+                          {c.current_mean?.toFixed
+                            ? c.current_mean.toFixed(2)
+                            : c.current_mean}{" "}
+                          {c.relative_change != null &&
+                            `(change: ${(c.relative_change * 100).toFixed(1)}%)`}
+                        </li>
+                      ))}
+                    {report.drift.columns.filter((c: any) => c.drift).length === 0 && (
+                      <li>No significant drift detected.</li>
+                    )}
+                  </ul>
+                ) : (
+                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                    No drift information available.
+                  </p>
                 )}
               </div>
             </div>
+          </div>
 
-            {/* PII panel */}
+          {/* Explanations & Recommendations */}
+          <div
+            style={{
+              marginTop: "1.5rem",
+              display: "grid",
+              gap: "1rem",
+              gridTemplateColumns: "1fr 1fr",
+            }}
+          >
+            {/* Explanations panel */}
             <div
               style={{
                 padding: "1rem",
@@ -346,21 +507,29 @@ function App() {
                 border: "1px solid #1f2937",
               }}
             >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>PII Detection</h2>
-              {report.pii.has_pii ? (
-                <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.875rem" }}>
-                  {report.pii.pii_columns.map((c, idx) => (
-                    <li key={idx}>
-                      <strong>{c.column}</strong> → {c.detected_types.join(", ")}
-                    </li>
+              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+                Why this score?
+              </h2>
+              {report.explanations && report.explanations.length > 0 ? (
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: "1.2rem",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  {report.explanations.map((line, idx) => (
+                    <li key={idx}>{line}</li>
                   ))}
                 </ul>
               ) : (
-                <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>No PII detected.</p>
+                <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                  No explanations available.
+                </p>
               )}
             </div>
 
-            {/* Outliers panel */}
+            {/* Recommendations panel */}
             <div
               style={{
                 padding: "1rem",
@@ -369,75 +538,29 @@ function App() {
                 border: "1px solid #1f2937",
               }}
             >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Outliers</h2>
-              {report.outliers.columns.length === 0 ? (
-                <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                  No numeric columns or no outliers detected.
-                </p>
-              ) : (
-                <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.875rem" }}>
-                  {report.outliers.columns
-                    .slice() // copy
-                    .sort(
-                      (a, b) =>
-                        b.outlier_ratio - a.outlier_ratio
-                    )
-                    .slice(0, 5)
-                    .map((col, idx) => (
-                      <li key={idx}>
-                        <strong>{col.column}</strong> – outliers: {col.outlier_count} (
-                        {formatPercent(col.outlier_ratio)}) [{col.severity}]
-                      </li>
-                    ))}
-                </ul>
-              )}
-            </div>
-
-            {/* Drift panel */}
-            <div
-              style={{
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-              }}
-            >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Drift</h2>
-              {report.drift.baseline_created ? (
-                <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                  Baseline created for this dataset. Re-run with a newer version to see drift
-                  analysis.
-                </p>
-              ) : report.drift.columns && report.drift.columns.length > 0 ? (
-                <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.875rem" }}>
-                  {report.drift.columns
-                    .filter((c: any) => c.drift)
-                    .map((c: any, idx: number) => (
-                      <li key={idx}>
-                        <strong>{c.column}</strong> – baseline mean:{" "}
-                        {c.baseline_mean?.toFixed
-                          ? c.baseline_mean.toFixed(2)
-                          : c.baseline_mean}{" "}
-                        → current:{" "}
-                        {c.current_mean?.toFixed
-                          ? c.current_mean.toFixed(2)
-                          : c.current_mean}{" "}
-                        {c.relative_change != null &&
-                          `(change: ${(c.relative_change * 100).toFixed(1)}%)`}
-                      </li>
-                    ))}
-                  {report.drift.columns.filter((c: any) => c.drift).length === 0 && (
-                    <li>No significant drift detected.</li>
-                  )}
+              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+                What to fix next?
+              </h2>
+              {report.recommendations && report.recommendations.length > 0 ? (
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: "1.2rem",
+                    fontSize: "0.875rem",
+                  }}
+                >
+                  {report.recommendations.map((line, idx) => (
+                    <li key={idx}>{line}</li>
+                  ))}
                 </ul>
               ) : (
                 <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                  No drift information available.
+                  No specific recommendations generated.
                 </p>
               )}
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Optional raw JSON for debugging */}
