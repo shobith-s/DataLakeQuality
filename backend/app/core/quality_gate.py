@@ -15,6 +15,7 @@ from app.core.pii import detect_pii
 from app.core.profiling import profile_dataset
 from app.core.scoring import compute_quality_score
 from app.utils.io import load_csv
+from app.utils.history import save_history_run
 
 
 def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
@@ -140,5 +141,8 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         "recommendations": recommendations,
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
+
+    # 9) Persist history for time-travel / trend analysis
+    save_history_run(dataset_name, report)
 
     return report

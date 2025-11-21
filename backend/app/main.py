@@ -1,4 +1,6 @@
 # app/main.py
+from typing import List
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,12 +8,14 @@ from app.core.quality_gate import run_quality_gate
 from app.core.contracts import suggest_contract_from_df, persist_contract_suggestion
 from app.models.report import QualityReport
 from app.models.contract_suggestion import ContractSuggestion
+from app.models.history import RunHistoryEntry
 from app.utils.io import save_upload_to_disk, load_csv
+from app.utils.history import list_history_runs
 
 
 app = FastAPI(
     title="DataLakeQ – Quality Gate API",
-    version="0.2.0",
+    version="0.3.0",
     description="Lightweight data quality gate for CSV datasets.",
 )
 
@@ -95,3 +99,12 @@ async def suggest_contract(
         saved=persist_result["saved"],
         note=persist_result.get("note"),
     )
+
+
+@app.get("/history/{dataset_name}", response_model=List[RunHistoryEntry])
+async def get_history(dataset_name: str):
+    """
+    Return recent history (up to 20 runs) for a dataset, in chronological order.
+    """
+    entries = list_history_runs(dataset_name)
+    return entries

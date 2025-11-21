@@ -1,4 +1,14 @@
 import { useState } from "react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 
 type QualityReport = {
   dataset_name: string;
@@ -57,6 +67,16 @@ type ContractSuggestion = {
   note?: string | null;
 };
 
+type HistoryEntry = {
+  dataset_name: string;
+  generated_at: string | null;
+  quality_score: number;
+  missing_ratio: number;
+  duplicate_ratio: number;
+  overall_outlier_ratio: number;
+  has_drift: boolean;
+};
+
 function getLabelColor(label: string): string {
   switch (label) {
     case "GREEN":
@@ -74,14 +94,39 @@ function formatPercent(v: number): string {
   return (v * 100).toFixed(1) + "%";
 }
 
+function formatHistoryLabel(value: string | null): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  // show time; if you want date+time, tweak this
+  return d.toLocaleTimeString();
+}
+
 function App() {
   const [datasetName, setDatasetName] = useState("customers");
   const [file, setFile] = useState<File | null>(null);
   const [report, setReport] = useState<QualityReport | null>(null);
   const [suggestedContract, setSuggestedContract] =
     useState<ContractSuggestion | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadHistory = async (name: string) => {
+    try {
+      const res = await fetch(
+        `http://localhost:8000/history/${encodeURIComponent(name)}`
+      );
+      if (!res.ok) {
+        console.error("Failed to load history", res.status);
+        return;
+      }
+      const data = (await res.json()) as HistoryEntry[];
+      setHistory(data);
+    } catch (err) {
+      console.error("Failed to load history", err);
+    }
+  };
 
   const handleUpload = async () => {
     setError(null);
@@ -111,6 +156,9 @@ function App() {
 
       const data = (await res.json()) as QualityReport;
       setReport(data);
+
+      // Load history after successful analysis
+      await loadHistory(datasetName);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to analyze dataset.");
@@ -169,7 +217,8 @@ function App() {
       </h1>
       <p style={{ marginBottom: "1.5rem", color: "#9ca3af" }}>
         Upload a CSV, run the quality gate, and see trust score, contract issues, PII,
-        outliers, drift, policy gate status, and suggested data contracts in one view.
+        outliers, drift, policy gate status, suggested data contracts, and quality
+        history in one view.
       </p>
 
       {/* Input panel */}
@@ -666,6 +715,72 @@ function App() {
             </div>
           )}
 
+          {/* History chart */}
+          {history && history.length > 0 && (
+            <div
+              style={{
+                marginTop: "1.5rem",
+                padding: "1rem",
+                borderRadius: "0.75rem",
+                background: "#020617",
+                border: "1px solid #1f2937",
+              }}
+            >
+              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+                Quality history (last {history.length} runs)
+              </h2>
+              <div style={{ width: "100%", height: 260 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={history}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="generated_at"
+                      tickFormatter={formatHistoryLabel}
+                      tick={{ fontSize: 10 }}
+                    />
+                    <YAxis />
+                    <Tooltip
+                      labelFormatter={(value) =>
+                        `Run at ${formatHistoryLabel(value as string)}`
+                      }
+                      formatter={(value, name) => {
+                        if (name === "missing_ratio") {
+                          return [`${formatPercent(value as number)}`, "Missing ratio"];
+                        }
+                        if (name === "overall_outlier_ratio") {
+                          return [
+                            `${formatPercent(value as number)}`,
+                            "Outlier ratio",
+                          ];
+                        }
+                        return [value, name === "quality_score" ? "Quality score" : name];
+                      }}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="quality_score"
+                      name="Quality score"
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="missing_ratio"
+                      name="Missing ratio"
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="overall_outlier_ratio"
+                      name="Outlier ratio"
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
           {/* Optional raw JSON for debugging */}
           <details style={{ marginTop: "1.5rem" }}>
             <summary style={{ cursor: "pointer", fontSize: "0.875rem" }}>
@@ -696,7 +811,7 @@ function App() {
             padding: "1rem",
             borderRadius: "0.75rem",
             background: "#020617",
-            border: "1px solid #1f2937",
+            border: "1px solid "#1f2937",
           }}
         >
           <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
