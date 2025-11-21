@@ -177,4 +177,3 @@ This build is optimized for:
 - Simple, explainable checks  
 - Clean React UI  
 - Fully reproducible workflow  
-```
