@@ -23,4 +23,7 @@ class QualityReport(BaseModel):
     explanations: List[str]
     recommendations: List[str]
 
+    autofix_steps: List[str]
+    autofix_script: str
+
     generated_at: str

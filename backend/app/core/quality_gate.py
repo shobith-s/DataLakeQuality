@@ -103,9 +103,9 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
     pipeline_passed = policy_result["pipeline_passed"]
     policy_failures = policy_result["failures"]
 
-    # 8) Explanations & recommendations
+    # 8) Explanations, recommendations & autofix
     from app.core.explain import build_explanations
-    from app.core.autofix import build_recommendations
+    from app.core.autofix import build_recommendations, build_autofix
 
     explanations = build_explanations(
         summary_extended,
@@ -124,6 +124,17 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         drift_result,
     )
 
+    autofix = build_autofix(
+        summary_extended,
+        basic_profile,
+        contract_result,
+        pii_result,
+        outliers_result,
+        drift_result,
+    )
+    autofix_steps = autofix["steps"]
+    autofix_script = autofix["script"]
+
     report: Dict[str, Any] = {
         "dataset_name": dataset_name,
         "quality_score": score_obj["score"],
@@ -139,6 +150,8 @@ def run_quality_gate(dataset_name: str, csv_path) -> Dict[str, Any]:
         "drift": drift_result,
         "explanations": explanations,
         "recommendations": recommendations,
+        "autofix_steps": autofix_steps,
+        "autofix_script": autofix_script,
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
 

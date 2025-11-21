@@ -57,6 +57,8 @@ type QualityReport = {
   drift: any;
   explanations: string[];
   recommendations: string[];
+  autofix_steps: string[];
+  autofix_script: string;
   generated_at: string;
 };
 
@@ -98,7 +100,6 @@ function formatHistoryLabel(value: string | null): string {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  // show time; if you want date+time, tweak this
   return d.toLocaleTimeString();
 }
 
@@ -157,7 +158,6 @@ function App() {
       const data = (await res.json()) as QualityReport;
       setReport(data);
 
-      // Load history after successful analysis
       await loadHistory(datasetName);
     } catch (err: any) {
       console.error(err);
@@ -202,6 +202,25 @@ function App() {
     }
   };
 
+  const handleDownloadAutofix = () => {
+    if (!report || !report.autofix_script) return;
+    const blob = new Blob([report.autofix_script], {
+      type: "text/x-python;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeName =
+      report.dataset_name && report.dataset_name.trim().length > 0
+        ? report.dataset_name.trim().replace(/[^a-zA-Z0-9_-]+/g, "_")
+        : "dataset";
+    a.download = `${safeName}_autofix.py`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div
       style={{
@@ -217,8 +236,8 @@ function App() {
       </h1>
       <p style={{ marginBottom: "1.5rem", color: "#9ca3af" }}>
         Upload a CSV, run the quality gate, and see trust score, contract issues, PII,
-        outliers, drift, policy gate status, suggested data contracts, and quality
-        history in one view.
+        outliers, drift, policy gate status, suggested data contracts, quality history,
+        and auto-generated fix scripts in one view.
       </p>
 
       {/* Input panel */}
@@ -614,7 +633,7 @@ function App() {
             </div>
           </div>
 
-          {/* Explanations & Recommendations */}
+          {/* Explanations, Recommendations, AutoFix */}
           <div
             style={{
               marginTop: "1.5rem",
@@ -685,6 +704,105 @@ function App() {
               )}
             </div>
           </div>
+
+          {/* AutoFix panel */}
+          {report && (
+            <div
+              style={{
+                marginTop: "1.5rem",
+                display: "grid",
+                gap: "1rem",
+                gridTemplateColumns: "1fr 1fr",
+              }}
+            >
+              {/* AutoFix steps */}
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
+                }}
+              >
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+                  AutoFix plan
+                </h2>
+                {report.autofix_steps && report.autofix_steps.length > 0 ? (
+                  <ul
+                    style={{
+                      margin: 0,
+                      paddingLeft: "1.2rem",
+                      fontSize: "0.875rem",
+                    }}
+                  >
+                    {report.autofix_steps.map((line, idx) => (
+                      <li key={idx}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
+                    No autofix steps generated.
+                  </p>
+                )}
+              </div>
+
+              {/* AutoFix script */}
+              <div
+                style={{
+                  padding: "1rem",
+                  borderRadius: "0.75rem",
+                  background: "#020617",
+                  border: "1px solid #1f2937",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <h2 style={{ fontSize: "1rem", marginBottom: 0 }}>
+                    AutoFix script (Python)
+                  </h2>
+                  <button
+                    onClick={handleDownloadAutofix}
+                    style={{
+                      padding: "0.35rem 0.9rem",
+                      borderRadius: "999px",
+                      border: "none",
+                      background: "#22c55e",
+                      color: "#022c22",
+                      fontSize: "0.8rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Download .py
+                  </button>
+                </div>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: "0.75rem",
+                    borderRadius: "0.5rem",
+                    background: "#020617",
+                    border: "1px solid #1f2937",
+                    fontSize: "0.8rem",
+                    overflowX: "auto",
+                    whiteSpace: "pre",
+                    maxHeight: "260px",
+                  }}
+                >
+                  {report.autofix_script}
+                </pre>
+              </div>
+            </div>
+          )}
 
           {/* Policy failures panel */}
           {!report.pipeline_passed && report.policy_failures.length > 0 && (
