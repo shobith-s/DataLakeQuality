@@ -150,7 +150,7 @@ def suggest_contract_from_df(dataset_name: str, df: pd.DataFrame) -> Dict[str, A
         "required_columns": required_columns,
         "column_types": column_types,
         "unique_keys": unique_keys,
-        # Optional: default policy can be added manually by users
+        # Optional: policy can be added manually by users
     }
     return contract
 
@@ -229,13 +229,17 @@ def evaluate_policy(
         has_drift: true
         psi_severity_in: ["severe", "moderate"]
     """
-    if contract is None:
+    # If no contract at all → nothing to enforce
+    if not isinstance(contract, dict):
         return {"pipeline_passed": True, "failures": []}
 
-    policy = contract.get("policy")
-    if not policy:
+    raw_policy = contract.get("policy")
+
+    # If policy is missing or not a dict (e.g. list by mistake) → ignore it gracefully
+    if not isinstance(raw_policy, dict):
         return {"pipeline_passed": True, "failures": []}
 
+    policy: Dict[str, Any] = raw_policy
     fail_on: Dict[str, Any] = policy.get("fail_on", {}) or {}
     failures: List[str] = []
 
