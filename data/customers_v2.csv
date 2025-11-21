@@ -1,0 +1,10 @@
+customer_id,email,signup_date,age,amount
+1,alice@example.com,2024-06-10,30,120.5
+2,bob@example.com,2024-06-12,29,130.0
+3,charlie@example.com,2024-07-01,31,90.0
+4,diana@example.com,2024-07-10,27,110.0
+5,eric@example.com,2024-07-15,28,115.0
+6,frank@example.com,2024-07-20,32,900.0
+7,george@example.com,2024-07-22,33,950.0
+8,helen@example.com,2024-07-25,34,1000.0
+
