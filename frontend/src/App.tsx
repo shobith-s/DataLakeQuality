@@ -443,7 +443,7 @@ function App() {
                   padding: "1rem",
                   borderRadius: "0.75rem",
                   background: "#020617",
-                  border: "1px solid "#1f2937",
+                  border: "1px solid #1d0204ff",
                 }}
               >
                 <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Drift</h2>
