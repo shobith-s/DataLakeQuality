@@ -48,6 +48,13 @@ type QualityReport = {
   generated_at: string;
 };
 
+type ContractSuggestion = {
+  dataset_name: string;
+  contract_yaml: string;
+  saved: boolean;
+  note?: string | null;
+};
+
 function getLabelColor(label: string): string {
   switch (label) {
     case "GREEN":
@@ -69,12 +76,15 @@ function App() {
   const [datasetName, setDatasetName] = useState("customers");
   const [file, setFile] = useState<File | null>(null);
   const [report, setReport] = useState<QualityReport | null>(null);
+  const [suggestedContract, setSuggestedContract] =
+    useState<ContractSuggestion | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleUpload = async () => {
     setError(null);
     setReport(null);
+    setSuggestedContract(null);
 
     if (!file) {
       setError("Please select a CSV file.");
@@ -107,6 +117,41 @@ function App() {
     }
   };
 
+  const handleSuggestContract = async () => {
+    setError(null);
+    setSuggestedContract(null);
+
+    if (!file) {
+      setError("Please select a CSV file.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("dataset_name", datasetName);
+    formData.append("file", file);
+
+    setLoading(true);
+    try {
+      const res = await fetch("http://localhost:8000/suggest-contract", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.detail || `Request failed with ${res.status}`);
+      }
+
+      const data = (await res.json()) as ContractSuggestion;
+      setSuggestedContract(data);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to suggest contract.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div
       style={{
@@ -122,7 +167,7 @@ function App() {
       </h1>
       <p style={{ marginBottom: "1.5rem", color: "#9ca3af" }}>
         Upload a CSV, run the quality gate, and see trust score, contract issues, PII,
-        outliers, and drift in one view.
+        outliers, drift, and suggested data contracts in one view.
       </p>
 
       {/* Input panel */}
@@ -181,6 +226,23 @@ function App() {
           }}
         >
           {loading ? "Analyzing..." : "Run Quality Gate"}
+        </button>
+
+        <button
+          onClick={handleSuggestContract}
+          disabled={loading}
+          style={{
+            marginTop: "1.4rem",
+            padding: "0.5rem 1rem",
+            borderRadius: "0.5rem",
+            border: "none",
+            background: loading ? "#4b5563" : "#0ea5e9",
+            color: "white",
+            fontWeight: 600,
+            cursor: loading ? "default" : "pointer",
+          }}
+        >
+          {loading ? "Working..." : "Suggest Contract"}
         </button>
       </div>
 
@@ -303,7 +365,7 @@ function App() {
                   </li>
                   <li>
                     Contract violations:{" "}
-                      <strong>{report.summary.contract_violations}</strong>
+                    <strong>{report.summary.contract_violations}</strong>
                   </li>
                   <li>
                     Drift detected:{" "}
@@ -443,7 +505,7 @@ function App() {
                   padding: "1rem",
                   borderRadius: "0.75rem",
                   background: "#020617",
-                  border: "1px solid #1d0204ff",
+                  border: "1px solid #1f2937",
                 }}
               >
                 <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Drift</h2>
@@ -560,29 +622,69 @@ function App() {
               )}
             </div>
           </div>
+
+          {/* Optional raw JSON for debugging */}
+          <details style={{ marginTop: "1.5rem" }}>
+            <summary style={{ cursor: "pointer", fontSize: "0.875rem" }}>
+              Show raw JSON report (debug)
+            </summary>
+            <pre
+              style={{
+                marginTop: "0.5rem",
+                padding: "1rem",
+                borderRadius: "0.75rem",
+                background: "#020617",
+                border: "1px solid #1f2937",
+                fontSize: "0.75rem",
+                overflowX: "auto",
+              }}
+            >
+              {JSON.stringify(report, null, 2)}
+            </pre>
+          </details>
         </>
       )}
 
-      {/* Optional raw JSON for debugging */}
-      {report && (
-        <details style={{ marginTop: "1.5rem" }}>
-          <summary style={{ cursor: "pointer", fontSize: "0.875rem" }}>
-            Show raw JSON report (debug)
-          </summary>
+      {/* Suggested contract YAML */}
+      {suggestedContract && (
+        <div
+          style={{
+            marginTop: "1.5rem",
+            padding: "1rem",
+            borderRadius: "0.75rem",
+            background: "#020617",
+            border: "1px solid #1f2937",
+          }}
+        >
+          <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
+            Suggested Contract (YAML)
+          </h2>
+          {suggestedContract.note && (
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "#9ca3af",
+                marginBottom: "0.5rem",
+              }}
+            >
+              {suggestedContract.note}
+            </p>
+          )}
           <pre
             style={{
-              marginTop: "0.5rem",
-              padding: "1rem",
-              borderRadius: "0.75rem",
+              margin: 0,
+              padding: "0.75rem",
+              borderRadius: "0.5rem",
               background: "#020617",
               border: "1px solid #1f2937",
-              fontSize: "0.75rem",
+              fontSize: "0.8rem",
               overflowX: "auto",
+              whiteSpace: "pre",
             }}
           >
-            {JSON.stringify(report, null, 2)}
+            {suggestedContract.contract_yaml}
           </pre>
-        </details>
+        </div>
       )}
     </div>
   );
