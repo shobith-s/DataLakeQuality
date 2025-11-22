@@ -9,12 +9,11 @@ import AutofixPanel from "./components/panels/AutofixPanel";
 import HistoryPanel from "./components/panels/HistoryPanel";
 import RawReportPanel from "./components/panels/RawReportPanel";
 import SchemaChangesPanel from "./components/panels/SchemaChangesPanel";
-import HeaderBar, {
-  type NavTabId,
-} from "./components/layout/HeaderBar";
+import HeaderBar, { type NavTabId } from "./components/layout/HeaderBar";
 
 import type { DataQualityReport } from "./types/report";
 import { dlqColors, dlqTypography } from "./ui/theme";
+import FileDropZone from "./ui/FileDropZone";
 
 const NAV_TO_SECTION_ID: Record<NavTabId, string> = {
   profiling: "section-profiling",
@@ -33,13 +32,6 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<NavTabId>("profiling");
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] || null;
-    setFile(f);
-    setReport(null);
-    setError(null);
-  };
 
   const handleAnalyze = async () => {
     if (!file) {
@@ -132,68 +124,17 @@ const App: React.FC = () => {
           datasetName={report?.dataset_name}
         />
 
-        {/* File upload + Run button */}
-        <section
-          style={{
-            borderRadius: 10,
-            padding: 12,
-            marginBottom: 20,
-            background: "rgba(9, 11, 22, 0.9)",
-            border: "1px solid rgba(70, 80, 140, 0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
+        {/* Phase 3: modern drag & drop uploader */}
+        <FileDropZone
+          file={file}
+          onFileSelected={(f) => {
+            setFile(f);
+            setReport(null);
+            setError(null);
           }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <input
-              type="file"
-              accept=".csv"
-              onChange={handleFileChange}
-              style={{
-                fontSize: 13,
-                padding: "4px",
-                borderRadius: 6,
-                border: "1px solid #333",
-                background: "#050509",
-              }}
-            />
-            <button
-              onClick={handleAnalyze}
-              disabled={!file || loading}
-              style={{
-                padding: "7px 16px",
-                borderRadius: 999,
-                border: "none",
-                background: loading ? "#283046" : "#4169e1",
-                color: "#fff",
-                cursor: !file || loading ? "default" : "pointer",
-                fontSize: 13,
-                fontWeight: 500,
-                boxShadow: loading
-                  ? "none"
-                  : "0 0 0 1px rgba(65,105,225,0.5), 0 10px 24px rgba(0,0,0,0.4)",
-                transition: "background 0.15s ease",
-              }}
-            >
-              {loading ? "Analyzing…" : "Run Data Quality Check"}
-            </button>
-          </div>
-          <div style={{ fontSize: 12, color: dlqColors.textSecondary }}>
-            {file ? (
-              <>
-                Selected:{" "}
-                <span style={{ color: "#fff", fontWeight: 500 }}>
-                  {file.name}
-                </span>
-              </>
-            ) : (
-              "Upload a CSV to start."
-            )}
-          </div>
-        </section>
+          onRun={handleAnalyze}
+          loading={loading}
+        />
 
         {/* Error state */}
         {error && (
@@ -218,7 +159,8 @@ const App: React.FC = () => {
             style={{
               fontSize: 13,
               color: "#888",
-              marginTop: 8,
+              marginTop: 4,
+              marginBottom: 8,
             }}
           >
             Once you run a check, you’ll see score, schema changes, PII, AutoFix
