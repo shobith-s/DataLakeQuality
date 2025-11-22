@@ -1,5 +1,5 @@
 // frontend/src/components/panels/AutofixPanel.tsx
-import React from "react";
+import React, { useState } from "react";
 import type { DataQualityReport } from "../../types/report";
 import Card from "../../ui/Card";
 import Chip from "../../ui/Chip";
@@ -12,11 +12,13 @@ interface Props {
 }
 
 const AutofixPanel: React.FC<Props> = ({ report, onDownload }) => {
-  const plan = Array.isArray(report.autofix_plan) ? report.autofix_plan : [];
+  const plan = report.autofix_plan || [];
   const script = report.autofix_script || "";
 
   const hasScript = script.trim().length > 0;
   const hasPlan = plan.length > 0;
+
+  const [showScript, setShowScript] = useState(hasScript);
 
   const handleDownloadClick = () => {
     if (!hasScript) return;
@@ -128,7 +130,7 @@ const AutofixPanel: React.FC<Props> = ({ report, onDownload }) => {
           </div>
         )}
 
-        {/* Script preview */}
+        {/* Script preview area with hide/show like JSON */}
         <div
           style={{
             marginTop: 6,
@@ -148,61 +150,93 @@ const AutofixPanel: React.FC<Props> = ({ report, onDownload }) => {
             }}
           >
             <span>Preview (Python script)</span>
-            {hasScript ? (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={() => {
-                  navigator.clipboard?.writeText(script).catch(() => undefined);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    navigator.clipboard?.writeText(script).catch(() => undefined);
-                  }
-                }}
-                style={{ display: "inline-flex", cursor: "pointer" }}
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                alignItems: "center",
+              }}
+            >
+              <Chip
+                subtle
+                tone="default"
+                size="sm"
+                style={{ cursor: hasScript ? "pointer" : "default" }}
+                onClick={
+                  hasScript ? () => setShowScript((v) => !v) : undefined
+                }
               >
-                <Chip subtle tone="info" size="sm">
-                  Copy to clipboard
-                </Chip>
-              </span>
-            ) : (
-              <Chip subtle tone="default" size="sm">
-                No script generated
+                {showScript ? "Hide script" : "Show script"}
               </Chip>
-            )}
+              <Chip
+                subtle
+                tone={hasScript ? "info" : "default"}
+                size="sm"
+                style={{ cursor: hasScript ? "pointer" : "default" }}
+                onClick={
+                  hasScript
+                    ? () => {
+                        navigator.clipboard
+                          ?.writeText(script)
+                          .catch(() => undefined);
+                      }
+                    : undefined
+                }
+              >
+                {hasScript ? "Copy to clipboard" : "No script generated"}
+              </Chip>
+            </div>
           </div>
 
-          <div
-            style={{
-              borderRadius: 8,
-              backgroundColor: "#050816",
-              border: `1px solid ${dlqColors.borderSubtle}`,
-              overflow: "hidden",
-            }}
-          >
-            <textarea
-              readOnly
-              value={
-                hasScript
-                  ? script
-                  : "# No AutoFix script generated for this run.\n# Configure rules or introduce data issues to see AutoFix suggestions."
-              }
+          {!hasScript ? (
+            <div
               style={{
-                width: "100%",
-                minHeight: 220,
-                maxHeight: 280,
-                padding: 10,
-                border: "none",
-                resize: "vertical",
-                fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                 fontSize: 12,
-                lineHeight: 1.4,
-                backgroundColor: "transparent",
-                color: "#e5e7eb",
+                color: dlqColors.textSecondary,
               }}
-            />
-          </div>
+            >
+              No AutoFix script was generated for this run. Introduce data
+              issues or configure AutoFix rules to see suggested cleaning code.
+            </div>
+          ) : !showScript ? (
+            <div
+              style={{
+                fontSize: 12,
+                color: dlqColors.textSecondary,
+              }}
+            >
+              Script preview is hidden to keep the panel compact. Click{" "}
+              <strong>Show script</strong> to view the generated Python file.
+            </div>
+          ) : (
+            <div
+              style={{
+                borderRadius: 8,
+                backgroundColor: "#050816",
+                border: `1px solid ${dlqColors.borderSubtle}`,
+                overflow: "hidden",
+              }}
+            >
+              <textarea
+                readOnly
+                value={script}
+                style={{
+                  width: "100%",
+                  minHeight: 220,
+                  maxHeight: 280,
+                  padding: 10,
+                  border: "none",
+                  resize: "vertical",
+                  fontFamily:
+                    "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                  backgroundColor: "transparent",
+                  color: "#e5e7eb",
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
     </Card>

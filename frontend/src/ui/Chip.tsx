@@ -10,6 +10,7 @@ export interface ChipProps {
   size?: "sm" | "md";
   subtle?: boolean;
   style?: React.CSSProperties;
+  onClick?: () => void; // NEW: allow click handlers
 }
 
 const toneMap: Record<
@@ -47,6 +48,7 @@ const Chip: React.FC<ChipProps> = ({
   size = "sm",
   subtle = false,
   style,
+  onClick,
 }) => {
   const base = toneMap[tone];
 
@@ -56,6 +58,7 @@ const Chip: React.FC<ChipProps> = ({
 
   return (
     <span
+      onClick={onClick}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -71,6 +74,8 @@ const Chip: React.FC<ChipProps> = ({
           ? `1px solid ${base.border}`
           : "none",
         whiteSpace: "nowrap",
+        cursor: onClick ? "pointer" : "default",
+        userSelect: onClick ? "none" : "auto",
         ...style,
       }}
     >
