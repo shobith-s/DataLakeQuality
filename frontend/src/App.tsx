@@ -1,969 +1,228 @@
-import { useState } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
+// frontend/src/App.tsx
+import React, { useState } from "react";
+import AlertsPanel, { type Alert } from "./components/AlertsPanel";
 
-type QualityReport = {
-  dataset_name: string;
-  quality_score: number;
-  quality_label: string;
-  status: string;
-  pipeline_passed: boolean;
-  policy_failures: string[];
-  summary: {
-    row_count: number;
-    column_count: number;
-    total_missing_cells: number;
-    missing_ratio: number;
-    duplicate_rows: number;
-    duplicate_ratio: number;
-    pii_column_count: number;
-    contract_violations: number;
-    overall_outlier_ratio: number;
-    has_drift: boolean;
-  };
-  basic_profile: {
-    missing_by_column: Record<string, number>;
-    inferred_types?: Record<string, string>;
-    column_stats?: Record<string, any>;
-  };
-  contract: any;
-  pii: {
-    pii_columns: { column: string; detected_types: string[] }[];
-    pii_column_count: number;
-    has_pii: boolean;
-  };
-  outliers: {
-    columns: {
-      column: string;
-      mean: number;
-      std: number | null;
-      outlier_count: number;
-      value_count: number;
-      outlier_ratio: number;
-      severity: string;
-    }[];
-    total_outliers: number;
-    total_numeric_values: number;
-    overall_outlier_ratio: number;
-  };
-  drift: any;
-  explanations: string[];
-  recommendations: string[];
-  autofix_steps: string[];
-  autofix_script: string;
-  generated_at: string;
-};
-
-type ContractSuggestion = {
-  dataset_name: string;
-  contract_yaml: string;
-  saved: boolean;
-  note?: string | null;
-};
-
-type HistoryEntry = {
-  dataset_name: string;
-  generated_at: string | null;
-  quality_score: number;
+interface ColumnProfile {
+  name: string;
+  dtype: string;
   missing_ratio: number;
-  duplicate_ratio: number;
-  overall_outlier_ratio: number;
+  outlier_ratio: number;
+  pii_type?: string | null;
+  drift_severity?: string | null;
+  psi?: number | null;
+}
+
+interface PolicyFailure {
+  code: string;
+  message: string;
+}
+
+interface DataQualityReport {
+  dataset_name: string;
+  run_id: string;
+  overall_score: number;
+  missing_ratio: number;
+  outlier_ratio: number;
   has_drift: boolean;
-};
-
-function getLabelColor(label: string): string {
-  switch (label) {
-    case "GREEN":
-      return "#16a34a";
-    case "YELLOW":
-      return "#eab308";
-    case "RED":
-      return "#dc2626";
-    default:
-      return "#6b7280";
-  }
+  psi_severity?: string | null;
+  columns: ColumnProfile[];
+  policy_passed: boolean;
+  policy_failures: PolicyFailure[];
+  alerts: Alert[];
+  // Keep extra fields flexible so we don't break your existing backend
+  [key: string]: unknown;
 }
 
-function formatPercent(v: number): string {
-  return (v * 100).toFixed(1) + "%";
-}
-
-function formatHistoryLabel(value: string | null): string {
-  if (!value) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleTimeString();
-}
-
-function App() {
-  const [datasetName, setDatasetName] = useState("customers");
+const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
-  const [report, setReport] = useState<QualityReport | null>(null);
-  const [suggestedContract, setSuggestedContract] =
-    useState<ContractSuggestion | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  const [report, setReport] = useState<DataQualityReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadHistory = async (name: string) => {
-    try {
-      const res = await fetch(
-        `http://localhost:8000/history/${encodeURIComponent(name)}`
-      );
-      if (!res.ok) {
-        console.error("Failed to load history", res.status);
-        return;
-      }
-      const data = (await res.json()) as HistoryEntry[];
-      setHistory(data);
-    } catch (err) {
-      console.error("Failed to load history", err);
-    }
-  };
-
-  const handleUpload = async () => {
-    setError(null);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] || null;
+    setFile(f);
     setReport(null);
-    setSuggestedContract(null);
-
-    if (!file) {
-      setError("Please select a CSV file.");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("dataset_name", datasetName);
-    formData.append("file", file);
-
-    setLoading(true);
-    try {
-      const res = await fetch("http://localhost:8000/analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.detail || `Request failed with ${res.status}`);
-      }
-
-      const data = (await res.json()) as QualityReport;
-      setReport(data);
-
-      await loadHistory(datasetName);
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Failed to analyze dataset.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSuggestContract = async () => {
     setError(null);
-    setSuggestedContract(null);
+  };
 
+  const handleAnalyze = async () => {
     if (!file) {
-      setError("Please select a CSV file.");
+      setError("Please select a CSV file first.");
       return;
     }
 
-    const formData = new FormData();
-    formData.append("dataset_name", datasetName);
-    formData.append("file", file);
-
     setLoading(true);
+    setError(null);
+
     try {
-      const res = await fetch("http://localhost:8000/suggest-contract", {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // Adjust this endpoint to match your actual FastAPI route.
+      const res = await fetch("/analyze", {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.detail || `Request failed with ${res.status}`);
+        const text = await res.text();
+        throw new Error(
+          `Backend error (${res.status}): ${text || res.statusText}`
+        );
       }
 
-      const data = (await res.json()) as ContractSuggestion;
-      setSuggestedContract(data);
+      const data = (await res.json()) as DataQualityReport;
+      setReport(data);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to suggest contract.");
+      setError(err.message || "Unknown error during analysis.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDownloadAutofix = () => {
-    if (!report || !report.autofix_script) return;
-    const blob = new Blob([report.autofix_script], {
-      type: "text/x-python;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const safeName =
-      report.dataset_name && report.dataset_name.trim().length > 0
-        ? report.dataset_name.trim().replace(/[^a-zA-Z0-9_-]+/g, "_")
-        : "dataset";
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${safeName}_autofix.py`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   return (
     <div
       style={{
         minHeight: "100vh",
-        padding: "2rem",
-        background: "#020617",
-        color: "#e5e7eb",
+        background: "#050509",
+        color: "#f5f5f5",
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+        padding: 16,
       }}
     >
-      <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>
-        DataLakeQ – Quality Gate
-      </h1>
-      <p style={{ marginBottom: "1.5rem", color: "#9ca3af" }}>
-        Upload a CSV, run the quality gate, and see trust score, contract issues, PII,
-        outliers, drift, policy gate status, suggested data contracts, quality history,
-        and auto-generated fix scripts in one view.
-      </p>
+      {/* Header */}
+      <header style={{ marginBottom: 16 }}>
+        <h1 style={{ margin: 0, fontSize: 24 }}>DataLakeQ – Data Quality Firewall</h1>
+        <p style={{ margin: 0, fontSize: 14, color: "#aaa" }}>
+          Profiling · Drift · PII · Policy Engine · AutoFix · Alerts
+        </p>
+      </header>
 
-      {/* Input panel */}
-      <div
+      {/* Upload + Actions */}
+      <section
         style={{
+          border: "1px solid #333",
+          borderRadius: 8,
+          padding: 12,
+          marginBottom: 16,
           display: "flex",
-          gap: "1rem",
           alignItems: "center",
+          gap: 12,
           flexWrap: "wrap",
-          marginBottom: "1.5rem",
         }}
       >
-        <div>
-          <label style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-            Dataset name
-          </label>
-          <input
-            value={datasetName}
-            onChange={(e) => setDatasetName(e.target.value)}
-            style={{
-              display: "block",
-              marginTop: "0.25rem",
-              padding: "0.4rem 0.6rem",
-              borderRadius: "0.375rem",
-              border: "1px solid #374151",
-              background: "#020617",
-              color: "#e5e7eb",
-            }}
-          />
-        </div>
-
-        <div>
-          <label style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-            CSV file
-          </label>
-          <input
-            type="file"
-            accept=".csv"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            style={{ display: "block", marginTop: "0.25rem" }}
-          />
-        </div>
-
+        <input
+          type="file"
+          accept=".csv"
+          onChange={handleFileChange}
+          style={{ fontSize: 14 }}
+        />
         <button
-          onClick={handleUpload}
-          disabled={loading}
+          onClick={handleAnalyze}
+          disabled={!file || loading}
           style={{
-            marginTop: "1.4rem",
-            padding: "0.5rem 1rem",
-            borderRadius: "0.5rem",
-            border: "none",
-            background: loading ? "#4b5563" : "#4f46e5",
-            color: "white",
-            fontWeight: 600,
+            padding: "6px 14px",
+            borderRadius: 6,
+            border: "1px solid #555",
+            background: loading ? "#222" : "#1e88e5",
+            color: "#fff",
             cursor: loading ? "default" : "pointer",
+            fontSize: 14,
           }}
         >
-          {loading ? "Analyzing..." : "Run Quality Gate"}
+          {loading ? "Analyzing..." : "Run Data Quality Check"}
         </button>
+        {file && (
+          <span style={{ fontSize: 12, color: "#ccc" }}>
+            Selected: {file.name}
+          </span>
+        )}
+      </section>
 
-        <button
-          onClick={handleSuggestContract}
-          disabled={loading}
-          style={{
-            marginTop: "1.4rem",
-            padding: "0.5rem 1rem",
-            borderRadius: "0.5rem",
-            border: "none",
-            background: loading ? "#4b5563" : "#0ea5e9",
-            color: "white",
-            fontWeight: 600,
-            cursor: loading ? "default" : "pointer",
-          }}
-        >
-          {loading ? "Working..." : "Suggest Contract"}
-        </button>
-      </div>
-
+      {/* Error state */}
       {error && (
-        <div
+        <section
           style={{
-            marginBottom: "1rem",
-            padding: "0.75rem 1rem",
-            borderRadius: "0.5rem",
-            background: "#7f1d1d",
-            color: "#fee2e2",
+            border: "1px solid #552222",
+            background: "#220707",
+            color: "#ffb3b3",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 16,
           }}
         >
-          {error}
-        </div>
+          <strong>Error:</strong> {error}
+        </section>
       )}
 
-      {/* Main report area */}
+      {/* Main Content */}
       {report && (
-        <>
-          <div
-            style={{
-              display: "grid",
-              gap: "1rem",
-              gridTemplateColumns: "2fr 3fr",
-            }}
-          >
-            {/* Left: score + summary */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <div>
-                    <div style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                      Quality score
-                    </div>
-                    <div style={{ fontSize: "2.5rem", fontWeight: 700 }}>
-                      {report.quality_score.toFixed(1)}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      alignSelf: "center",
-                      padding: "0.3rem 0.75rem",
-                      borderRadius: "999px",
-                      background: getLabelColor(report.quality_label) + "22",
-                      color: getLabelColor(report.quality_label),
-                      fontWeight: 600,
-                      fontSize: "0.875rem",
-                    }}
-                  >
-                    {report.quality_label}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    marginTop: "0.5rem",
-                    fontSize: "0.875rem",
-                    color: "#9ca3af",
-                  }}
-                >
-                  Dataset:{" "}
-                  <span style={{ color: "#e5e7eb" }}>{report.dataset_name}</span>
-                </div>
-                <div
-                  style={{
-                    fontSize: "0.75rem",
-                    color: "#6b7280",
-                    marginTop: "0.25rem",
-                  }}
-                >
-                  Generated at: {new Date(report.generated_at).toLocaleString()}
-                </div>
-              </div>
+        <main
+          style={{
+            display: "grid",
+            gridTemplateColumns: "2fr 1.5fr",
+            gap: 16,
+            alignItems: "flex-start",
+          }}
+        >
+          {/* Left column – core summary + alerts */}
+          <div>
+            {/* Alerts Panel */}
+            <AlertsPanel alerts={report.alerts} />
 
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Summary</h2>
-                <ul
-                  style={{
-                    listStyle: "none",
-                    padding: 0,
-                    margin: 0,
-                    fontSize: "0.875rem",
-                    display: "grid",
-                    gap: "0.25rem",
-                  }}
-                >
-                  <li>
-                    Rows: <strong>{report.summary.row_count}</strong> · Columns:{" "}
-                    <strong>{report.summary.column_count}</strong>
-                  </li>
-                  <li>
-                    Missing cells:{" "}
-                    <strong>{report.summary.total_missing_cells}</strong> (
-                    {formatPercent(report.summary.missing_ratio)})
-                  </li>
-                  <li>
-                    Duplicate rows: <strong>{report.summary.duplicate_rows}</strong> (
-                    {formatPercent(report.summary.duplicate_ratio)})
-                  </li>
-                  <li>
-                    PII columns: <strong>{report.summary.pii_column_count}</strong>
-                  </li>
-                  <li>
-                    Outlier ratio:{" "}
-                    <strong>{formatPercent(report.summary.overall_outlier_ratio)}</strong>
-                  </li>
-                  <li>
-                    Contract violations:{" "}
-                    <strong>{report.summary.contract_violations}</strong>
-                  </li>
-                  <li>
-                    Drift detected:{" "}
-                    <strong>{report.summary.has_drift ? "YES" : "NO"}</strong>
-                  </li>
-                  <li>
-                    Pipeline status:{" "}
-                    <strong
-                      style={{
-                        color: report.pipeline_passed ? "#16a34a" : "#dc2626",
-                      }}
-                    >
-                      {report.pipeline_passed ? "PASSED" : "FAILED"}
-                    </strong>
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            {/* Right: details panels */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              {/* Contract panel */}
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Contract</h2>
-                {report.contract.note && (
-                  <p style={{ fontSize: "0.8rem", color: "#fbbf24" }}>
-                    {report.contract.note}
-                  </p>
-                )}
-                <div style={{ fontSize: "0.875rem" }}>
-                  <p>
-                    Status:{" "}
-                    <strong
-                      style={{
-                        color: report.contract.passed ? "#16a34a" : "#f97316",
-                      }}
-                    >
-                      {report.contract.passed ? "Passed" : "Issues found"}
-                    </strong>
-                  </p>
-                  <p>
-                    Required columns missing:{" "}
-                    <strong>
-                      {report.contract.required_columns.missing.length > 0
-                        ? report.contract.required_columns.missing.join(", ")
-                        : "None"}
-                    </strong>
-                  </p>
-                  {report.contract.type_mismatches.length > 0 && (
-                    <div>
-                      <p>Type mismatches:</p>
-                      <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
-                        {report.contract.type_mismatches.map(
-                          (m: any, idx: number) => (
-                            <li key={idx}>
-                              {m.column}: expected <code>{m.expected}</code>, actual{" "}
-                              <code>{m.actual}</code>
-                            </li>
-                          )
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* PII panel */}
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-                  PII Detection
-                </h2>
-                {report.pii.has_pii ? (
-                  <ul
-                    style={{
-                      margin: 0,
-                      paddingLeft: "1.2rem",
-                      fontSize: "0.875rem",
-                    }}
-                  >
-                    {report.pii.pii_columns.map((c, idx) => (
-                      <li key={idx}>
-                        <strong>{c.column}</strong> → {c.detected_types.join(", ")}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                    No PII detected.
-                  </p>
-                )}
-              </div>
-
-              {/* Outliers panel */}
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Outliers</h2>
-                {report.outliers.columns.length === 0 ? (
-                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                    No numeric columns or no outliers detected.
-                  </p>
-                ) : (
-                  <ul
-                    style={{
-                      margin: 0,
-                      paddingLeft: "1.2rem",
-                      fontSize: "0.875rem",
-                    }}
-                  >
-                    {report.outliers.columns
-                      .slice()
-                      .sort((a, b) => b.outlier_ratio - a.outlier_ratio)
-                      .slice(0, 5)
-                      .map((col, idx) => (
-                        <li key={idx}>
-                          <strong>{col.column}</strong> – outliers:{" "}
-                          {col.outlier_count} ({formatPercent(col.outlier_ratio)}) [
-                          {col.severity}]
-                        </li>
-                      ))}
-                  </ul>
-                )}
-              </div>
-
-              {/* Drift panel */}
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Drift</h2>
-                {report.drift.baseline_created ? (
-                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                    Baseline created for this dataset. Re-run with a newer version to see
-                    drift analysis.
-                  </p>
-                ) : report.drift.columns && report.drift.columns.length > 0 ? (
-                  <ul
-                    style={{
-                      margin: 0,
-                      paddingLeft: "1.2rem",
-                      fontSize: "0.875rem",
-                    }}
-                  >
-                    {report.drift.columns
-                      .filter((c: any) => c.drift)
-                      .map((c: any, idx: number) => (
-                        <li key={idx}>
-                          <strong>{c.column}</strong> – baseline mean:{" "}
-                          {c.baseline_mean?.toFixed
-                            ? c.baseline_mean.toFixed(2)
-                            : c.baseline_mean}{" "}
-                          → current:{" "}
-                          {c.current_mean?.toFixed
-                            ? c.current_mean.toFixed(2)
-                            : c.current_mean}{" "}
-                          {c.relative_change != null &&
-                            `(change: ${(c.relative_change * 100).toFixed(1)}%)`}{" "}
-                          {c.psi != null &&
-                            `(PSI: ${c.psi.toFixed(3)}, ${c.psi_severity})`}
-                        </li>
-                      ))}
-                    {report.drift.columns.filter((c: any) => c.drift).length === 0 && (
-                      <li>No significant drift detected.</li>
-                    )}
-                  </ul>
-                ) : (
-                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                    No drift information available.
-                  </p>
-                )}
-              </div>
-            </div>
+            {/* TODO: Add your existing summary components here */}
+            {/* Example: ScorePanel, PolicyPanel, DriftPanel, etc. */}
+            {/* <ScorePanel report={report} /> */}
+            {/* <PolicyPanel policy_passed={report.policy_passed} failures={report.policy_failures} /> */}
           </div>
 
-          {/* Explanations, Recommendations, AutoFix */}
-          <div
-            style={{
-              marginTop: "1.5rem",
-              display: "grid",
-              gap: "1rem",
-              gridTemplateColumns: "1fr 1fr",
-            }}
-          >
-            {/* Explanations panel */}
-            <div
+          {/* Right column – history, autofix, raw JSON, etc. */}
+          <div>
+            {/* TODO: Hook your existing panels here */}
+            {/* <HistoryPanel history={report.history_snapshot} /> */}
+            {/* <AutoFixPanel autofix={report.autofix_plan} /> */}
+
+            {/* Temporary raw JSON viewer for debugging */}
+            <section
               style={{
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
+                border: "1px solid #333",
+                borderRadius: 8,
+                padding: 12,
+                marginBottom: 16,
+                background: "#060612",
               }}
             >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-                Why this score?
+              <h2 style={{ margin: 0, marginBottom: 8, fontSize: 16 }}>
+                Raw Report (Debug)
               </h2>
-              {report.explanations && report.explanations.length > 0 ? (
-                <ul
-                  style={{
-                    margin: 0,
-                    paddingLeft: "1.2rem",
-                    fontSize: "0.875rem",
-                  }}
-                >
-                  {report.explanations.map((line, idx) => (
-                    <li key={idx}>{line}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                  No explanations available.
-                </p>
-              )}
-            </div>
-
-            {/* Recommendations panel */}
-            <div
-              style={{
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-              }}
-            >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-                What to fix next?
-              </h2>
-              {report.recommendations && report.recommendations.length > 0 ? (
-                <ul
-                  style={{
-                    margin: 0,
-                    paddingLeft: "1.2rem",
-                    fontSize: "0.875rem",
-                  }}
-                >
-                  {report.recommendations.map((line, idx) => (
-                    <li key={idx}>{line}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                  No specific recommendations generated.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* AutoFix panel */}
-          {report && (
-            <div
-              style={{
-                marginTop: "1.5rem",
-                display: "grid",
-                gap: "1rem",
-                gridTemplateColumns: "1fr 1fr",
-              }}
-            >
-              {/* AutoFix steps */}
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                }}
-              >
-                <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-                  AutoFix plan
-                </h2>
-                {report.autofix_steps && report.autofix_steps.length > 0 ? (
-                  <ul
-                    style={{
-                      margin: 0,
-                      paddingLeft: "1.2rem",
-                      fontSize: "0.875rem",
-                    }}
-                  >
-                    {report.autofix_steps.map((line, idx) => (
-                      <li key={idx}>{line}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p style={{ fontSize: "0.875rem", color: "#9ca3af" }}>
-                    No autofix steps generated.
-                  </p>
-                )}
-              </div>
-
-              {/* AutoFix script */}
-              <div
-                style={{
-                  padding: "1rem",
-                  borderRadius: "0.75rem",
-                  background: "#020617",
-                  border: "1px solid #1f2937",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.5rem",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <h2 style={{ fontSize: "1rem", marginBottom: 0 }}>
-                    AutoFix script (Python)
-                  </h2>
-                  <button
-                    onClick={handleDownloadAutofix}
-                    style={{
-                      padding: "0.35rem 0.9rem",
-                      borderRadius: "999px",
-                      border: "none",
-                      background: "#22c55e",
-                      color: "#022c22",
-                      fontSize: "0.8rem",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Download .py
-                  </button>
-                </div>
-                <pre
-                  style={{
-                    margin: 0,
-                    padding: "0.75rem",
-                    borderRadius: "0.5rem",
-                    background: "#020617",
-                    border: "1px solid #1f2937",
-                    fontSize: "0.8rem",
-                    overflowX: "auto",
-                    whiteSpace: "pre",
-                    maxHeight: "260px",
-                  }}
-                >
-                  {report.autofix_script}
-                </pre>
-              </div>
-            </div>
-          )}
-
-          {/* Policy failures panel */}
-          {!report.pipeline_passed && report.policy_failures.length > 0 && (
-            <div
-              style={{
-                marginTop: "1.5rem",
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#111827",
-                border: "1px solid #7f1d1d",
-              }}
-            >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem", color: "#fecaca" }}>
-                Policy Gate Failures
-              </h2>
-              <ul
+              <pre
                 style={{
                   margin: 0,
-                  paddingLeft: "1.2rem",
-                  fontSize: "0.875rem",
-                  color: "#fecaca",
+                  maxHeight: 300,
+                  overflow: "auto",
+                  fontSize: 11,
+                  background: "#020208",
+                  padding: 8,
+                  borderRadius: 4,
                 }}
               >
-                {report.policy_failures.map((line, idx) => (
-                  <li key={idx}>{line}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* History chart */}
-          {history && history.length > 0 && (
-            <div
-              style={{
-                marginTop: "1.5rem",
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-              }}
-            >
-              <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-                Quality history (last {history.length} runs)
-              </h2>
-              <div style={{ width: "100%", height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={history}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="generated_at"
-                      tickFormatter={formatHistoryLabel}
-                      tick={{ fontSize: 10 }}
-                    />
-                    <YAxis />
-                    <Tooltip
-                      labelFormatter={(value) =>
-                        `Run at ${formatHistoryLabel(value as string)}`
-                      }
-                      formatter={(value, name) => {
-                        if (name === "missing_ratio") {
-                          return [`${formatPercent(value as number)}`, "Missing ratio"];
-                        }
-                        if (name === "overall_outlier_ratio") {
-                          return [
-                            `${formatPercent(value as number)}`,
-                            "Outlier ratio",
-                          ];
-                        }
-                        return [value, name === "quality_score" ? "Quality score" : name];
-                      }}
-                    />
-                    <Legend />
-                    <Line
-                      type="monotone"
-                      dataKey="quality_score"
-                      name="Quality score"
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="missing_ratio"
-                      name="Missing ratio"
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="overall_outlier_ratio"
-                      name="Outlier ratio"
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Optional raw JSON for debugging */}
-          <details style={{ marginTop: "1.5rem" }}>
-            <summary style={{ cursor: "pointer", fontSize: "0.875rem" }}>
-              Show raw JSON report (debug)
-            </summary>
-            <pre
-              style={{
-                marginTop: "0.5rem",
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                background: "#020617",
-                border: "1px solid #1f2937",
-                fontSize: "0.75rem",
-                overflowX: "auto",
-              }}
-            >
-              {JSON.stringify(report, null, 2)}
-            </pre>
-          </details>
-        </>
+                {JSON.stringify(report, null, 2)}
+              </pre>
+            </section>
+          </div>
+        </main>
       )}
 
-      {/* Suggested contract YAML */}
-      {suggestedContract && (
-        <div
-          style={{
-            marginTop: "1.5rem",
-            padding: "1rem",
-            borderRadius: "0.75rem",
-            background: "#020617",
-            border: "1px solid #1f2937",
-          }}
-        >
-          <h2 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>
-            Suggested Contract (YAML)
-          </h2>
-          {suggestedContract.note && (
-            <p
-              style={{
-                fontSize: "0.8rem",
-                color: "#9ca3af",
-                marginBottom: "0.5rem",
-              }}
-            >
-              {suggestedContract.note}
-            </p>
-          )}
-          <pre
-            style={{
-              margin: 0,
-              padding: "0.75rem",
-              borderRadius: "0.5rem",
-              background: "#020617",
-              border: "1px solid #1f2937",
-              fontSize: "0.8rem",
-              overflowX: "auto",
-              whiteSpace: "pre",
-            }}
-          >
-            {suggestedContract.contract_yaml}
-          </pre>
-        </div>
+      {!report && !loading && (
+        <p style={{ fontSize: 13, color: "#777", marginTop: 8 }}>
+          Upload a CSV and run the data quality check to see alerts, policy
+          status, and AutoFix suggestions.
+        </p>
       )}
     </div>
   );
-}
+};
 
 export default App;
