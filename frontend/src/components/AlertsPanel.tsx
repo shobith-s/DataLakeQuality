@@ -1,43 +1,13 @@
 // frontend/src/components/AlertsPanel.tsx
 import React from "react";
-
-export type AlertLevel = "error" | "warning" | "info";
-
-export interface Alert {
-  level: AlertLevel;
-  code: string;
-  message: string;
-}
+import type { Alert } from "../types/report";
 
 interface AlertsPanelProps {
-  alerts: Alert[] | null | undefined;
+  alerts: Alert[] | undefined;
 }
 
-const levelLabel: Record<AlertLevel, string> = {
-  error: "Error",
-  warning: "Warning",
-  info: "Info",
-};
-
 const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
-  if (!alerts || alerts.length === 0) {
-    return (
-      <section
-        style={{
-          border: "1px solid #333",
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 16,
-          background: "#111",
-        }}
-      >
-        <h2 style={{ margin: 0, marginBottom: 8, fontSize: 18 }}>Alerts</h2>
-        <p style={{ margin: 0, fontSize: 14, color: "#999" }}>
-          No alerts generated for this run.
-        </p>
-      </section>
-    );
-  }
+  const list = alerts ?? [];
 
   return (
     <section
@@ -46,61 +16,48 @@ const AlertsPanel: React.FC<AlertsPanelProps> = ({ alerts }) => {
         borderRadius: 8,
         padding: 12,
         marginBottom: 16,
-        background: "#111",
+        background: "#060612",
       }}
     >
-      <h2 style={{ margin: 0, marginBottom: 8, fontSize: 18 }}>Alerts</h2>
-      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-        {alerts.map((alert, idx) => {
-          const icon =
-            alert.level === "error"
-              ? "🚨"
-              : alert.level === "warning"
-              ? "⚠️"
-              : "ℹ️";
-
-          const color =
-            alert.level === "error"
-              ? "#ff6b6b"
-              : alert.level === "warning"
-              ? "#ffd166"
-              : "#9be7ff";
-
-          return (
+      <h2 style={{ margin: 0, marginBottom: 8, fontSize: 16 }}>Alerts</h2>
+      {list.length === 0 && (
+        <p style={{ margin: 0, fontSize: 13, color: "#aaa" }}>
+          No alerts for this run.
+        </p>
+      )}
+      {list.length > 0 && (
+        <ul
+          style={{
+            listStyle: "none",
+            padding: 0,
+            margin: 0,
+            fontSize: 13,
+          }}
+        >
+          {list.map((a, idx) => (
             <li
-              key={`${alert.code}-${idx}`}
+              key={`${a.code}-${idx}`}
               style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 8,
-                padding: "6px 0",
-                borderBottom:
-                  idx < alerts.length - 1 ? "1px solid #222" : "none",
+                padding: 8,
+                borderRadius: 6,
+                border: "1px solid #222",
+                background: "#05050c",
+                marginBottom: 6,
               }}
             >
-              <span style={{ fontSize: 18 }}>{icon}</span>
-              <div style={{ flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5,
-                    color,
-                    marginBottom: 2,
-                  }}
-                >
-                  {levelLabel[alert.level]} · {alert.code}
-                </div>
-                <div style={{ fontSize: 14, color: "#eee" }}>
-                  {alert.message}
-                </div>
+              <div style={{ marginBottom: 2 }}>
+                <span style={{ fontWeight: 600 }}>
+                  {a.level.toUpperCase()} · {a.code}
+                </span>
               </div>
+              <div style={{ color: "#ccc" }}>{a.message}</div>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+      )}
     </section>
   );
 };
 
 export default AlertsPanel;
+export type { Alert };
