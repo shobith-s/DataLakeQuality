@@ -19,7 +19,10 @@ const clampScore = (s: number | undefined | null): number => {
 };
 
 const ScoreCard: React.FC<Props> = ({ report }) => {
-  const rawScore = report.overall_score ?? report.score_grade?.final_score ?? 0;
+  const rawScore =
+    report.overall_score ??
+    ((report.score_grade as any)?.final_score ?? (report.score_grade as any)?.finalScore) ??
+    0;
   const score = clampScore(rawScore);
 
   let statusLabel = "Unknown";
