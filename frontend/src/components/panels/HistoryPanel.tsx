@@ -1,6 +1,9 @@
 // frontend/src/components/panels/HistoryPanel.tsx
 import React from "react";
 import type { DataQualityReport, HistoryPoint } from "../../types/report";
+import Card from "../../ui/Card";
+import Chip from "../../ui/Chip";
+import { dlqColors } from "../../ui/theme";
 
 interface Props {
   report: DataQualityReport;
@@ -8,136 +11,220 @@ interface Props {
 
 const HistoryPanel: React.FC<Props> = ({ report }) => {
   const snapshot = report.history_snapshot;
-  if (!snapshot) return null;
+  const points: HistoryPoint[] = snapshot?.points || [];
 
-  const points = (snapshot.points || []) as HistoryPoint[];
-
-  if (points.length === 0) {
+  if (!points.length) {
     return (
-      <section
-        style={{
-          border: "1px solid #333",
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 16,
-          background: "#060612",
-        }}
+      <Card
+        title="History Snapshot"
+        subtitle="Trend of overall data quality across recent runs"
+        variant="subtle"
       >
-        <h2 style={{ margin: 0, marginBottom: 8, fontSize: 16 }}>
-          History Snapshot
-        </h2>
-        <p style={{ margin: 0, fontSize: 13, color: "#aaa" }}>
-          Not enough runs yet to build a trend. Re-run the check on the same
-          dataset to start seeing history.
-        </p>
-      </section>
+        <div style={{ fontSize: 12, color: dlqColors.textSecondary }}>
+          No history is available yet. Once you run this dataset multiple
+          times, trend charts will appear here.
+        </div>
+      </Card>
     );
   }
 
-  const scores: number[] = points.map((p) =>
-    typeof p.overall_score === "number" ? p.overall_score : 0,
-  );
+  // Normalize to last N points (e.g., 20)
+  const maxPoints = 20;
+  const trimmed =
+    points.length > maxPoints ? points.slice(points.length - maxPoints) : points;
 
-  const minScore = Math.min(...scores);
-  const maxScore = Math.max(...scores);
-  const span = maxScore - minScore;
-  const n = scores.length;
+  const scores = trimmed
+    .map((p) => p.overall_score)
+    .filter((v): v is number => typeof v === "number");
 
-  const path = scores
-    .map((s, i) => {
-      const x = n === 1 ? 50 : (i / (n - 1)) * 100; // 0..100
+  const minScore = scores.length ? Math.min(...scores, 0) : 0;
+  const maxScore = scores.length ? Math.max(...scores, 100) : 100;
 
-      let y: number;
-      if (span === 0) {
-        // all scores identical → draw a flat line in the middle
-        y = 20; // mid of 0..40 viewBox
-      } else {
-        const norm = (s - minScore) / span; // 0..1
-        y = 5 + (1 - norm) * 30; // 5..35 (top-down)
-      }
+  const width = 260;
+  const height = 110;
+  const paddingX = 12;
+  const paddingY = 10;
 
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+  const xStep =
+    trimmed.length > 1
+      ? (width - paddingX * 2) / (trimmed.length - 1)
+      : 0;
+
+  const mapY = (val: number | undefined): number => {
+    const v = typeof val === "number" ? val : minScore;
+    if (maxScore === minScore) return height / 2;
+    const ratio = (v - minScore) / (maxScore - minScore);
+    // Invert because SVG y grows downward
+    return paddingY + (1 - ratio) * (height - paddingY * 2);
+  };
+
+  const linePath = trimmed
+    .map((p, idx) => {
+      const x = paddingX + idx * xStep;
+      const y = mapY(p.overall_score);
+      return `${idx === 0 ? "M" : "L"} ${x} ${y}`;
     })
     .join(" ");
 
-  const latest = points[points.length - 1];
+  const gradientId = "history-line-gradient";
+
+  const last = trimmed[trimmed.length - 1];
+  const previous = trimmed.length > 1 ? trimmed[trimmed.length - 2] : undefined;
+  const lastScore = last.overall_score ?? null;
+  const delta =
+    lastScore != null && previous?.overall_score != null
+      ? lastScore - previous.overall_score
+      : null;
 
   return (
-    <section
-      style={{
-        border: "1px solid #333",
-        borderRadius: 8,
-        padding: 12,
-        marginBottom: 16,
-        background: "#060612",
-      }}
+    <Card
+      title="History Snapshot"
+      subtitle="How this dataset's quality score evolved over time"
+      variant="subtle"
+      rightNode={
+        lastScore != null && (
+          <Chip tone="info" size="sm">
+            Latest: {lastScore.toFixed(1)}
+            {delta != null && (
+              <span
+                style={{
+                  marginLeft: 6,
+                  color: delta >= 0 ? "#22c55e" : "#f97316",
+                }}
+              >
+                {delta >= 0 ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}
+              </span>
+            )}
+          </Chip>
+        )
+      }
     >
-      <h2 style={{ margin: 0, marginBottom: 8, fontSize: 16 }}>
-        History Snapshot
-      </h2>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {/* Chart */}
+        <div
+          style={{
+            width: "100%",
+            maxWidth: width,
+            alignSelf: "center",
+          }}
+        >
+          <svg width={width} height={height}>
+            <defs>
+              <linearGradient
+                id={gradientId}
+                x1="0%"
+                y1="0%"
+                x2="0%"
+                y2="100%"
+              >
+                <stop offset="0%" stopColor="#06b6d4" stopOpacity={0.5} />
+                <stop offset="100%" stopColor="#06b6d4" stopOpacity={0} />
+              </linearGradient>
+            </defs>
 
-      <div style={{ marginBottom: 8, fontSize: 12, color: "#aaa" }}>
-        Runs: {points.length} · Latest score:{" "}
-        {latest.overall_score !== undefined
-          ? latest.overall_score.toFixed(1)
-          : "—"}
+            {/* background line grid (light) */}
+            <line
+              x1={paddingX}
+              y1={mapY(minScore)}
+              x2={width - paddingX}
+              y2={mapY(minScore)}
+              stroke="rgba(148,163,184,0.25)"
+              strokeWidth={0.5}
+              strokeDasharray="2 4"
+            />
+            <line
+              x1={paddingX}
+              y1={mapY(maxScore)}
+              x2={width - paddingX}
+              y2={mapY(maxScore)}
+              stroke="rgba(148,163,184,0.25)"
+              strokeWidth={0.5}
+              strokeDasharray="2 4"
+            />
+
+            {/* Chart area fill */}
+            {linePath && (
+              <path
+                d={`${linePath} L ${
+                  paddingX + (trimmed.length - 1) * xStep
+                } ${height - paddingY} L ${paddingX} ${
+                  height - paddingY
+                } Z`}
+                fill={`url(#${gradientId})`}
+                opacity={0.6}
+              />
+            )}
+
+            {/* Line */}
+            {linePath && (
+              <path
+                d={linePath}
+                fill="none"
+                stroke="#06b6d4"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            )}
+
+            {/* Points */}
+            {trimmed.map((p, idx) => {
+              const x = paddingX + idx * xStep;
+              const y = mapY(p.overall_score);
+              const isLast = idx === trimmed.length - 1;
+              return (
+                <circle
+                  key={p.timestamp + idx}
+                  cx={x}
+                  cy={y}
+                  r={isLast ? 4 : 3}
+                  fill={isLast ? "#06b6d4" : "#0ea5e9"}
+                  stroke="rgba(15,23,42,0.9)"
+                  strokeWidth={1}
+                />
+              );
+            })}
+          </svg>
+        </div>
+
+        {/* Last 2 runs compact info */}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            marginTop: 2,
+            fontSize: 11,
+          }}
+        >
+          {trimmed
+            .slice(-3)
+            .reverse()
+            .map((p, idx) => {
+              const label =
+                idx === 0
+                  ? "Latest run"
+                  : idx === 1
+                  ? "Previous"
+                  : "Earlier";
+              const s =
+                typeof p.overall_score === "number"
+                  ? p.overall_score.toFixed(1)
+                  : "—";
+              return (
+                <Chip key={p.timestamp + idx} subtle size="sm">
+                  {label}: {s}
+                </Chip>
+              );
+            })}
+        </div>
       </div>
-
-      <svg
-        viewBox="0 0 100 40"
-        preserveAspectRatio="none"
-        style={{
-          width: "100%",
-          height: 100,
-          background: "#020208",
-          borderRadius: 4,
-          border: "1px solid #222",
-          marginBottom: 8,
-        }}
-      >
-        {/* reference lines */}
-        <line x1="0" y1="35" x2="100" y2="35" stroke="#222" strokeWidth="0.4" />
-        <line x1="0" y1="20" x2="100" y2="20" stroke="#222" strokeWidth="0.4" />
-        <line x1="0" y1="5" x2="100" y2="5" stroke="#222" strokeWidth="0.4" />
-
-        <path
-          d={path}
-          fill="none"
-          stroke="#42a5f5"
-          strokeWidth="1.2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-      </svg>
-
-      <ul
-        style={{
-          margin: 0,
-          paddingLeft: 18,
-          fontSize: 11,
-          color: "#ccc",
-          maxHeight: 140,
-          overflow: "auto",
-        }}
-      >
-        {points.map((pt, idx) => (
-          <li key={idx}>
-            <strong>{pt.timestamp}</strong> – score:{" "}
-            {pt.overall_score !== undefined
-              ? pt.overall_score.toFixed(1)
-              : "—"}
-            , missing:{" "}
-            {pt.missing_ratio !== undefined
-              ? (pt.missing_ratio * 100).toFixed(1) + "%"
-              : "—"}
-            , outliers:{" "}
-            {pt.outlier_ratio !== undefined
-              ? (pt.outlier_ratio * 100).toFixed(1) + "%"
-              : "—"}
-          </li>
-        ))}
-      </ul>
-    </section>
+    </Card>
   );
 };
 
