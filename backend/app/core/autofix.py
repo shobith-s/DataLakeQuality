@@ -1,340 +1,364 @@
-# app/core/autofix.py
+# backend/app/core/autofix.py
+
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, Tuple
 
 
-def _is_numeric_type(t: str) -> bool:
-    return t in {"integer", "float", "number"}
+def _get_basic(profile: Mapping[str, Any]) -> Dict[str, Any]:
+    return profile.get("basic_profile") or {}
 
 
-def _is_date_type(t: str) -> bool:
-    return t in {"date", "datetime", "timestamp"}
+def _infer_numeric_columns(profile: Mapping[str, Any]) -> List[str]:
+    basic = _get_basic(profile)
+    inferred_types = basic.get("inferred_types") or {}
+    column_stats = basic.get("column_stats") or {}
+
+    numeric_cols: List[str] = []
+
+    for col, t in inferred_types.items():
+        t_str = str(t).lower()
+        if any(key in t_str for key in ("int", "float", "double", "number")):
+            numeric_cols.append(col)
+
+    for col, stats in column_stats.items():
+        if col in numeric_cols:
+            continue
+        t = str(stats.get("inferred_type", "")).lower()
+        if any(key in t for key in ("int", "float", "double", "number")):
+            numeric_cols.append(col)
+
+    return sorted(list(dict.fromkeys(numeric_cols)))
 
 
-def build_recommendations(
-    summary: Dict[str, Any],
-    basic_profile: Dict[str, Any],
-    contract: Dict[str, Any],
-    pii: Dict[str, Any],
-    outliers: Dict[str, Any],
-    drift: Dict[str, Any],
-) -> List[str]:
-    """
-    High-level natural-language recommendations based on the summary and
-    other checks. This is what the UI shows in the 'What to fix next?'
-    panel – more high-level than the concrete autofix script.
-    """
-    recs: List[str] = []
+def _infer_date_columns(profile: Mapping[str, Any]) -> List[str]:
+    basic = _get_basic(profile)
+    inferred_types = basic.get("inferred_types") or {}
 
-    row_count = summary.get("row_count", 0) or 0
-    missing_ratio = summary.get("missing_ratio", 0.0)
-    duplicate_ratio = summary.get("duplicate_ratio", 0.0)
-    contract_violations = summary.get("contract_violations", 0)
-    pii_column_count = summary.get("pii_column_count", 0)
-    overall_outlier_ratio = summary.get("overall_outlier_ratio", 0.0)
-    has_drift = summary.get("has_drift", False)
+    date_cols: List[str] = []
+    for col, t in inferred_types.items():
+        t_str = str(t).lower()
+        if "date" in t_str or "time" in t_str:
+            date_cols.append(col)
 
-    # Missing data
-    if missing_ratio > 0.2:
-        recs.append(
-            f"Missing values are high ({missing_ratio*100:.1f}%). Consider dropping or imputing columns with very high missingness."
+    # heuristic—also treat name-based hints
+    for col in inferred_types.keys():
+        name_lower = col.lower()
+        if any(key in name_lower for key in ("date", "dt", "timestamp")):
+            if col not in date_cols:
+                date_cols.append(col)
+
+    return sorted(list(dict.fromkeys(date_cols)))
+
+
+def _infer_categorical_columns(profile: Mapping[str, Any], numeric_cols: List[str]) -> List[str]:
+    basic = _get_basic(profile)
+    inferred_types = basic.get("inferred_types") or {}
+    column_stats = basic.get("column_stats") or {}
+
+    numeric_set = set(numeric_cols)
+    categorical: List[str] = []
+
+    for col, t in inferred_types.items():
+        if col in numeric_set:
+            continue
+        t_str = str(t).lower()
+        if "string" in t_str or "object" in t_str or "category" in t_str:
+            categorical.append(col)
+
+    for col, stats in column_stats.items():
+        if col in numeric_set or col in categorical:
+            continue
+        t = str(stats.get("inferred_type", "")).lower()
+        if "string" in t or "object" in t or "category" in t:
+            categorical.append(col)
+
+    return sorted(list(dict.fromkeys(categorical)))
+
+
+def _infer_email_columns(profile: Mapping[str, Any]) -> List[str]:
+    basic = _get_basic(profile)
+    inferred_types = basic.get("inferred_types") or {}
+    email_cols: List[str] = []
+
+    for col, t in inferred_types.items():
+        t_str = str(t).lower()
+        if "email" in t_str:
+            email_cols.append(col)
+
+    for col in inferred_types.keys():
+        name_lower = col.lower()
+        if "email" in name_lower and col not in email_cols:
+            email_cols.append(col)
+
+    return sorted(list(dict.fromkeys(email_cols)))
+
+
+def _infer_pii_columns(pii_result: Mapping[str, Any]) -> List[str]:
+    pii_cols = pii_result.get("pii_columns") or []
+    out: List[str] = []
+    for item in pii_cols:
+        col = item.get("column")
+        if col:
+            out.append(col)
+    return sorted(list(dict.fromkeys(out)))
+
+
+# ---------------------------------------------------------------------------
+# Plan builder
+# ---------------------------------------------------------------------------
+
+def _build_plan(
+    dataset_name: str,
+    profile: Mapping[str, Any],
+    pii_result: Mapping[str, Any],
+    outlier_result: Mapping[str, Any],
+) -> Dict[str, Any]:
+    numeric_cols = _infer_numeric_columns(profile)
+    date_cols = _infer_date_columns(profile)
+    cat_cols = _infer_categorical_columns(profile, numeric_cols)
+    email_cols = _infer_email_columns(profile)
+    pii_cols = _infer_pii_columns(pii_result)
+
+    header = f'''"""
+AutoFix script for dataset: {dataset_name}
+
+This script was generated by DataLakeQ.
+You can edit steps or disable ones you don't need.
+"""
+
+import pandas as pd
+import numpy as np
+
+INPUT_PATH = "input.csv"          # TODO: change to your raw CSV path
+OUTPUT_PATH = "autofixed_output.csv"  # TODO: change if needed
+
+df = pd.read_csv(INPUT_PATH)
+
+# Column groups inferred from profiling
+NUMERIC_COLUMNS = {numeric_cols}
+DATE_COLUMNS = {date_cols}
+CATEGORICAL_COLUMNS = {cat_cols}
+EMAIL_COLUMNS = {email_cols}
+PII_COLUMNS = {pii_cols}
+
+'''
+
+    footer = '''
+# --- Save result ------------------------------------------------------------
+
+df.to_csv(OUTPUT_PATH, index=False)
+print(f"Saved cleaned data to {OUTPUT_PATH}")
+'''
+
+    steps: List[Dict[str, Any]] = []
+
+    # 1) Missing numeric imputation
+    if numeric_cols:
+        steps.append(
+            {
+                "id": "missing_numeric_impute",
+                "label": "Fill missing numeric values with median",
+                "category": "missing",
+                "enabled": True,
+                "description": "For each numeric column, fill NaNs with the column median.",
+                "code": '''# 1) Fill missing numeric values with median
+for col in NUMERIC_COLUMNS:
+    if col in df.columns:
+        median_value = df[col].median()
+        df[col] = df[col].fillna(median_value)
+''',
+            }
         )
-    elif missing_ratio > 0.0:
-        recs.append(
-            f"There are some missing values ({missing_ratio*100:.1f}%). Consider imputing numeric columns with median and categorical columns with mode."
+
+    # 2) Missing categorical imputation
+    if cat_cols:
+        steps.append(
+            {
+                "id": "missing_categorical_impute",
+                "label": "Fill missing categorical values with mode",
+                "category": "missing",
+                "enabled": True,
+                "description": "For each categorical column, fill NaNs with the most frequent value.",
+                "code": '''# 2) Fill missing categorical values with mode
+for col in CATEGORICAL_COLUMNS:
+    if col in df.columns:
+        mode_series = df[col].mode(dropna=True)
+        if not mode_series.empty:
+            mode_value = mode_series.iloc[0]
+            df[col] = df[col].fillna(mode_value)
+''',
+            }
         )
 
-    # Duplicates
-    if duplicate_ratio > 0.0 and row_count > 0:
-        recs.append(
-            f"Duplicate rows detected ({duplicate_ratio*100:.1f}%). Consider dropping exact duplicates before loading into the data lake."
+    # 3) Outlier clipping for numeric columns (IQR)
+    if numeric_cols:
+        steps.append(
+            {
+                "id": "outlier_clip_iqr",
+                "label": "Clip numeric outliers using IQR (1.5x)",
+                "category": "outliers",
+                "enabled": True,
+                "description": "Winsorize extreme values beyond 1.5 * IQR range for numeric columns.",
+                "code": '''# 3) Clip numeric outliers using IQR
+for col in NUMERIC_COLUMNS:
+    if col in df.columns:
+        q1 = df[col].quantile(0.25)
+        q3 = df[col].quantile(0.75)
+        iqr = q3 - q1
+        if iqr == 0:
+            continue
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        df[col] = df[col].clip(lower=lower, upper=upper)
+''',
+            }
         )
 
-    # Contract violations
-    if contract_violations > 0:
-        missing_required = contract.get("required_columns", {}).get("missing", []) or []
-        if missing_required:
-            recs.append(
-                f"Contract is missing required columns: {', '.join(missing_required)}. Align upstream schema with the contract."
-            )
-        type_mismatches = contract.get("type_mismatches", []) or []
-        if type_mismatches:
-            cols = ", ".join(m["column"] for m in type_mismatches)
-            recs.append(
-                f"Contract type mismatches found in columns: {cols}. Standardize types at ingestion (e.g., date parsing, numeric casting)."
-            )
-
-    # PII
-    if pii_column_count > 0:
-        pii_cols = [c["column"] for c in pii.get("pii_columns", [])]
-        recs.append(
-            f"PII detected in {pii_column_count} column(s): {', '.join(pii_cols)}. Mask, hash, or tokenize these before storing in non-secure environments."
+    # 4) Date parsing
+    if date_cols:
+        steps.append(
+            {
+                "id": "date_parse_iso",
+                "label": "Parse date/time columns to ISO-8601",
+                "category": "dates",
+                "enabled": True,
+                "description": "Parse DATE_COLUMNS using pandas.to_datetime and format as ISO strings.",
+                "code": '''# 4) Normalize date / datetime columns to ISO-8601 strings
+for col in DATE_COLUMNS:
+    if col in df.columns:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+        df[col] = df[col].dt.strftime("%Y-%m-%dT%H:%M:%S").fillna(df[col].astype(str))
+''',
+            }
         )
 
-    # Outliers
-    if overall_outlier_ratio > 0.05:
-        recs.append(
-            f"Outliers are present in numeric features (overall ratio {overall_outlier_ratio*100:.1f}%). Consider capping using quantiles or using robust models."
+    # 5) Email normalization
+    if email_cols:
+        steps.append(
+            {
+                "id": "email_normalize",
+                "label": "Normalize email columns (trim + lowercase)",
+                "category": "strings",
+                "enabled": True,
+                "description": "Strip whitespace and lowercase email addresses for consistency.",
+                "code": '''# 5) Normalize email columns
+for col in EMAIL_COLUMNS:
+    if col in df.columns:
+        df[col] = (
+            df[col]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .replace({"nan": np.nan})
+        )
+''',
+            }
         )
 
-    # Drift
-    if has_drift and drift.get("columns"):
-        drifting_cols = [
-            c["column"] for c in drift.get("columns", []) if c.get("drift")
-        ]
-        if drifting_cols:
-            recs.append(
-                f"Drift detected in: {', '.join(drifting_cols)}. Investigate upstream changes or recalibrate models that consume this data."
-            )
+    # 6) PII masking / hashing
+    if pii_cols:
+        steps.append(
+            {
+                "id": "pii_mask",
+                "label": "Mask PII columns (hash values)",
+                "category": "pii",
+                "enabled": False,  # be conservative by default
+                "description": "Hash PII columns using SHA256 to reduce exposure of raw values.",
+                "code": '''# 6) Mask PII columns by hashing values (SHA256)
+import hashlib
 
-    if not recs:
-        recs.append("No major issues detected. You can proceed, but keep monitoring over time.")
+for col in PII_COLUMNS:
+    if col in df.columns:
+        def _hash_value(v):
+            if pd.isna(v):
+                return v
+            s = str(v).encode("utf-8")
+            return hashlib.sha256(s).hexdigest()
 
-    return recs
+        df[col] = df[col].apply(_hash_value)
+''',
+            }
+        )
 
+    plan: Dict[str, Any] = {
+        "header": header,
+        "footer": footer,
+        "steps": steps,
+    }
+    return plan
+
+
+def _assemble_script(plan: Mapping[str, Any]) -> str:
+    header = plan.get("header", "")
+    footer = plan.get("footer", "")
+    steps = plan.get("steps") or []
+    body_parts: List[str] = []
+
+    for step in steps:
+        if step.get("enabled"):
+            code = step.get("code") or ""
+            if code:
+                body_parts.append(code)
+
+    body = "\n".join(body_parts)
+    script = header.rstrip() + "\n\n" + body.rstrip() + "\n\n" + footer.lstrip()
+    return script
+
+
+# ---------------------------------------------------------------------------
+# Public API used by main.py
+# ---------------------------------------------------------------------------
 
 def build_autofix(
-    summary: Dict[str, Any],
-    basic_profile: Dict[str, Any],
-    contract: Dict[str, Any],
-    pii: Dict[str, Any],
-    outliers: Dict[str, Any],
-    drift: Dict[str, Any],
-) -> Dict[str, Any]:
+    df: Any,
+    dataset_name: str,
+    profile: Mapping[str, Any],
+    pii_result: Mapping[str, Any],
+    outlier_result: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], str]:
     """
-    Build a set of concrete autofix steps and a Python script skeleton
-    that users can plug into their pipeline.
+    Main AutoFix engine.
 
     Returns:
+      (plan, script)
+
+    plan:
       {
-        "steps": [str, ...],
-        "script": "python code..."
+        "header": "...",
+        "footer": "...",
+        "steps": [
+          {
+            "id": "missing_numeric_impute",
+            "label": "...",
+            "category": "...",
+            "enabled": true,
+            "description": "...",
+            "code": "..."
+          },
+          ...
+        ]
       }
+
+    script:
+      Full Python script assembled from header + enabled step code + footer.
     """
-    steps: List[str] = []
-    script_lines: List[str] = []
+    plan = _build_plan(
+        dataset_name=dataset_name,
+        profile=profile,
+        pii_result=pii_result,
+        outlier_result=outlier_result,
+    )
+    script = _assemble_script(plan)
+    return plan, script
 
-    row_count = summary.get("row_count", 0) or 0
-    missing_ratio = summary.get("missing_ratio", 0.0)
-    duplicate_ratio = summary.get("duplicate_ratio", 0.0)
-    contract_violations = summary.get("contract_violations", 0)
-    overall_outlier_ratio = summary.get("overall_outlier_ratio", 0.0)
 
-    missing_by_column: Dict[str, int] = basic_profile.get("missing_by_column", {}) or {}
-    inferred_types: Dict[str, str] = basic_profile.get("inferred_types", {}) or {}
-
-    # ---- Script header ----
-    script_lines.append("# Auto-generated data cleaning script by DataLakeQ")
-    script_lines.append("# Adjust the file path, column names, and logic as needed for your pipeline.")
-    script_lines.append("")
-    script_lines.append("import pandas as pd")
-    script_lines.append("")
-    script_lines.append("# TODO: update this with your actual file path")
-    script_lines.append('df = pd.read_csv("your_input_file.csv")')
-    script_lines.append("")
-
-    # ---- Missing values autofix ----
-    if missing_ratio > 0.0 and row_count > 0:
-        steps.append(
-            f"Handle missing values (overall missing ratio {missing_ratio*100:.1f}%)."
-        )
-        script_lines.append("# --- Missing value handling ---")
-        for col, miss_count in missing_by_column.items():
-            if row_count <= 0:
-                continue
-            col_missing_ratio = miss_count / row_count
-            if col_missing_ratio == 0:
-                continue
-
-            col_type = inferred_types.get(col, "string")
-            # High missingness: warn about dropping or domain-specific handling
-            if col_missing_ratio > 0.5:
-                steps.append(
-                    f"Column '{col}' has very high missingness ({col_missing_ratio*100:.1f}%). Consider dropping or using domain-specific imputation."
-                )
-                script_lines.append(
-                    f"# Column '{col}' has very high missingness ({col_missing_ratio*100:.1f}%)."
-                )
-                script_lines.append(
-                    f"# Option 1: drop the column entirely if it is not critical."
-                )
-                script_lines.append(f"# df = df.drop(columns=['{col}'])")
-                script_lines.append(
-                    "# Option 2: apply domain-specific imputation logic here."
-                )
-                script_lines.append("")
-            else:
-                # Moderate/low missingness → imputation
-                if _is_numeric_type(col_type):
-                    steps.append(
-                        f"Impute numeric column '{col}' with its median (missing {col_missing_ratio*100:.1f}%)."
-                    )
-                    script_lines.append(
-                        f"# Impute numeric column '{col}' with its median."
-                    )
-                    script_lines.append(
-                        f"df['{col}'] = df['{col}'].fillna(df['{col}'].median())"
-                    )
-                    script_lines.append("")
-                else:
-                    steps.append(
-                        f"Impute categorical/text column '{col}' with its most frequent value (missing {col_missing_ratio*100:.1f}%)."
-                    )
-                    script_lines.append(
-                        f"# Impute categorical/text column '{col}' with its most frequent value."
-                    )
-                    script_lines.append(
-                        f"mode_{col} = df['{col}'].mode(dropna=True)"
-                    )
-                    script_lines.append(
-                        f"if not mode_{col}.empty:\n"
-                        f"    df['{col}'] = df['{col}'].fillna(mode_{col}.iloc[0])"
-                    )
-                    script_lines.append("")
-        script_lines.append("")
-
-    # ---- Duplicates autofix ----
-    if duplicate_ratio > 0.0:
-        steps.append(
-            f"Drop duplicate rows (duplicate ratio {duplicate_ratio*100:.1f}%)."
-        )
-        script_lines.append("# --- Duplicate handling ---")
-        script_lines.append("# Drop exact duplicate rows.")
-        script_lines.append("df = df.drop_duplicates()")
-        script_lines.append("")
-
-    # ---- Contract violations autofix ----
-    if contract_violations > 0:
-        script_lines.append("# --- Contract-related fixes (schema & types) ---")
-        missing_required = contract.get("required_columns", {}).get("missing", []) or []
-        type_mismatches = contract.get("type_mismatches", []) or []
-
-        if missing_required:
-            steps.append(
-                f"Upstream schema is missing required contract columns: {', '.join(missing_required)}. Fix at the source."
-            )
-            script_lines.append(
-                "# The following required columns are missing according to the contract:"
-            )
-            script_lines.append(f"#   {', '.join(missing_required)}")
-            script_lines.append("# These must be added at the upstream source.")
-            script_lines.append("")
-
-        for tm in type_mismatches:
-            col = tm.get("column")
-            expected = tm.get("expected")
-            actual = tm.get("actual")
-            if not col:
-                continue
-
-            if _is_numeric_type(expected):
-                steps.append(
-                    f"Cast column '{col}' to numeric to satisfy contract (expected {expected}, actual {actual})."
-                )
-                script_lines.append(
-                    f"# Cast '{col}' to numeric, coercing invalid values to NaN."
-                )
-                script_lines.append(
-                    f"df['{col}'] = pd.to_numeric(df['{col}'], errors='coerce')"
-                )
-                script_lines.append("")
-            elif _is_date_type(expected):
-                steps.append(
-                    f"Parse column '{col}' as datetime to satisfy contract (expected {expected}, actual {actual})."
-                )
-                script_lines.append(
-                    f"# Parse '{col}' as datetime, invalid formats become NaT."
-                )
-                script_lines.append(
-                    f"df['{col}'] = pd.to_datetime(df['{col}'], errors='coerce')"
-                )
-                script_lines.append("")
-            else:
-                steps.append(
-                    f"Standardize column '{col}' to the expected type '{expected}' (actual '{actual}')."
-                )
-                script_lines.append(
-                    f"# TODO: standardize '{col}' to expected type '{expected}'."
-                )
-                script_lines.append("")
-
-    # ---- Outliers autofix ----
-    outlier_cols = outliers.get("columns", []) or []
-    severe_outlier_cols = [
-        c for c in outlier_cols if str(c.get("severity", "")).lower() in {"high", "severe"}
-    ]
-
-    if overall_outlier_ratio > 0.0 and severe_outlier_cols:
-        steps.append(
-            f"Cap severe outliers in numeric columns using quantile-based clipping (overall outlier ratio {overall_outlier_ratio*100:.1f}%)."
-        )
-        script_lines.append("# --- Outlier handling ---")
-        script_lines.append(
-            "# Example: cap severe outliers using 1st and 99th percentiles."
-        )
-        for col_info in severe_outlier_cols:
-            col = col_info.get("column")
-            if not col:
-                continue
-            script_lines.append(f"# Cap outliers in '{col}' via quantiles.")
-            script_lines.append(
-                f"q_low_{col} = df['{col}'].quantile(0.01)\n"
-                f"q_high_{col} = df['{col}'].quantile(0.99)\n"
-                f"df['{col}'] = df['{col}'].clip(lower=q_low_{col}, upper=q_high_{col})"
-            )
-            script_lines.append("")
-        script_lines.append("")
-
-    # ---- PII autofix ----
-    pii_cols = pii.get("pii_columns", []) or []
-    if pii_cols:
-        col_names = [c["column"] for c in pii_cols if c.get("column")]
-        if col_names:
-            steps.append(
-                f"Mask or hash PII columns so that raw values are not stored in the data lake: {', '.join(col_names)}."
-            )
-            script_lines.append("# --- PII handling ---")
-            script_lines.append("# Example: simple masking of PII columns.")
-            for col in col_names:
-                script_lines.append(
-                    f"# Mask column '{col}' – replace values with '[REDACTED]' or a hash."
-                )
-                script_lines.append(
-                    f"df['{col}'] = '[REDACTED]'  # or apply a hashing function"
-                )
-                script_lines.append("")
-            script_lines.append("")
-
-    # ---- Drift autofix (comments only) ----
-    if summary.get("has_drift", False):
-        drift_cols = [c for c in drift.get("columns", []) or [] if c.get("drift")]
-        if drift_cols:
-            names = ", ".join(c.get("column", "unknown") for c in drift_cols)
-            steps.append(
-                f"Investigate drift in upstream data for: {names}. Validate source systems or retrain models consuming this data."
-            )
-            script_lines.append("# --- Drift investigation (manual) ---")
-            script_lines.append(
-                f"# Drift detected in the following columns: {names}."
-            )
-            script_lines.append(
-                "# Investigate upstream changes, feature engineering, or retrain downstream models."
-            )
-            script_lines.append("")
-
-    # ---- Final save ----
-    script_lines.append("# TODO: update output path")
-    script_lines.append('df.to_csv("your_clean_output.csv", index=False)')
-    script_lines.append("")
-
-    if not steps:
-        steps.append(
-            "No strong autofix actions were generated; data quality looks acceptable. You can still use this script as a starting template."
-        )
-
-    script = "\n".join(script_lines)
-    return {
-        "steps": steps,
-        "script": script,
-    }
+# Backwards compatibility alias
+def generate_autofix(
+    df: Any,
+    dataset_name: str,
+    profile: Mapping[str, Any],
+    pii_result: Mapping[str, Any],
+    outlier_result: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], str]:
+    return build_autofix(df, dataset_name, profile, pii_result, outlier_result)
