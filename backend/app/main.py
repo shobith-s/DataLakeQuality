@@ -298,8 +298,109 @@ def _run_history_snapshot(dataset_name: str, report: Dict[str, Any]) -> Dict[str
 
 
 # ---------------------------------------------------------------------------
-# Metric normalization & score
+# Metric normalization & scoring
 # ---------------------------------------------------------------------------
+
+def _compute_score(
+    missing_ratio: float,
+    outlier_ratio: float,
+    duplicate_ratio: float,
+    has_pii: bool,
+    drift_severity: str | None,
+) -> Tuple[float, Dict[str, float], Dict[str, Any]]:
+    """
+    Compute a Data Quality Index and a human-readable grade.
+
+    We treat:
+      - missing / outliers / duplicates as ratios in [0,1]
+      - PII presence as a flat penalty
+      - drift severity as discrete penalty
+    """
+
+    # Cap ratios at 1.0 for penalty scaling
+    mr = max(0.0, min(missing_ratio, 1.0))
+    or_ = max(0.0, min(outlier_ratio, 1.0))
+    dr = max(0.0, min(duplicate_ratio, 1.0))
+
+    # Penalties (max when ratio >= 0.20)
+    penalty_missing = min(mr / 0.20, 1.0) * 35.0
+    penalty_outliers = min(or_ / 0.20, 1.0) * 25.0
+    penalty_duplicates = min(dr / 0.20, 1.0) * 15.0
+
+    penalty_pii = 10.0 if has_pii else 0.0
+
+    drift_key = (drift_severity or "").lower()
+    drift_penalty_map = {
+        "severe": 15.0,
+        "high": 15.0,
+        "moderate": 5.0,
+    }
+    penalty_drift = drift_penalty_map.get(drift_key, 0.0)
+
+    total_penalty = (
+        penalty_missing
+        + penalty_outliers
+        + penalty_duplicates
+        + penalty_pii
+        + penalty_drift
+    )
+
+    score = 100.0 - total_penalty
+    if score < 0.0:
+        score = 0.0
+    if score > 100.0:
+        score = 100.0
+
+    breakdown: Dict[str, float] = {
+        "base": 100.0,
+        "penalty_missing": penalty_missing,
+        "penalty_outliers": penalty_outliers,
+        "penalty_duplicates": penalty_duplicates,
+        "penalty_pii": penalty_pii,
+        "penalty_drift": penalty_drift,
+        "total_penalty": total_penalty,
+        "final_score": score,
+    }
+
+    # Grade
+    if score >= 90.0:
+        letter = "A"
+        label = "Excellent"
+    elif score >= 75.0:
+        letter = "B"
+        label = "Good"
+    elif score >= 60.0:
+        letter = "C"
+        label = "Fair"
+    else:
+        letter = "D"
+        label = "Poor"
+
+    reasons: List[str] = []
+    if penalty_missing > 0.5:
+        reasons.append("missing values")
+    if penalty_outliers > 0.5:
+        reasons.append("outliers")
+    if penalty_duplicates > 0.5:
+        reasons.append("duplicates")
+    if penalty_pii > 0.5:
+        reasons.append("PII columns")
+    if penalty_drift > 0.5:
+        reasons.append("drift")
+
+    if reasons:
+        reason = "Score reduced due to " + ", ".join(reasons) + "."
+    else:
+        reason = "Dataset looks very clean across key quality dimensions."
+
+    grade: Dict[str, Any] = {
+        "letter": letter,
+        "label": label,
+        "reason": reason,
+    }
+
+    return score, breakdown, grade
+
 
 def _normalize_metrics(report: Dict[str, Any]) -> None:
     """
@@ -308,6 +409,8 @@ def _normalize_metrics(report: Dict[str, Any]) -> None:
     - outlier_ratio
     - duplicate_ratio
     - overall_score
+    - score_breakdown
+    - score_grade
     """
     summary = report.get("summary") or {}
 
@@ -371,28 +474,27 @@ def _normalize_metrics(report: Dict[str, Any]) -> None:
     duplicate_ratio = _safe_float(duplicate_ratio, 0.0)
     report["duplicate_ratio"] = duplicate_ratio
 
-    # ----- overall_score -----
-    score = report.get("overall_score")
-    if score is None:
-        # heuristic: missing + outliers heavier than duplicates
-        penalty = (
-            0.4 * missing_ratio +
-            0.4 * outlier_ratio +
-            0.2 * duplicate_ratio
-        )
-        raw_score = 100.0 * (1.0 - penalty)
-        if raw_score < 0.0:
-            raw_score = 0.0
-        if raw_score > 100.0:
-            raw_score = 100.0
-        score = raw_score
+    # ----- has_pii + drift severity -----
+    has_pii = bool(
+        report.get("has_pii")
+        or (report.get("pii_column_count") or 0) > 0
+        or (len(report.get("pii_columns") or []) > 0)
+    )
 
-    try:
-        score = float(score)
-    except Exception:
-        score = 0.0
+    drift_severity = report.get("psi_severity") or report.get("drift_severity")
+
+    # ----- overall_score + breakdown + grade -----
+    score, breakdown, grade = _compute_score(
+        missing_ratio=missing_ratio,
+        outlier_ratio=outlier_ratio,
+        duplicate_ratio=duplicate_ratio,
+        has_pii=has_pii,
+        drift_severity=drift_severity,
+    )
 
     report["overall_score"] = score
+    report["score_breakdown"] = breakdown
+    report["score_grade"] = grade
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +556,7 @@ def _build_full_report(df: Any, dataset_name: str) -> Dict[str, Any]:
         "autofix_script": autofix_script,
     }
 
-    # 8) Normalize key metrics + compute score
+    # 8) Normalize key metrics + compute score & grade
     _normalize_metrics(report_base)
 
     # 9) History snapshot
