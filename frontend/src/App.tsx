@@ -9,14 +9,30 @@ import AutofixPanel from "./components/panels/AutofixPanel";
 import HistoryPanel from "./components/panels/HistoryPanel";
 import RawReportPanel from "./components/panels/RawReportPanel";
 import SchemaChangesPanel from "./components/panels/SchemaChangesPanel";
+import HeaderBar, {
+  type NavTabId,
+} from "./components/layout/HeaderBar";
 
 import type { DataQualityReport } from "./types/report";
+import { dlqColors, dlqTypography } from "./ui/theme";
+
+const NAV_TO_SECTION_ID: Record<NavTabId, string> = {
+  profiling: "section-profiling",
+  drift: "section-history",
+  pii: "section-pii",
+  policy: "section-policy",
+  autofix: "section-autofix",
+  alerts: "section-alerts",
+  history: "section-history",
+  schema: "section-schema",
+};
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [report, setReport] = useState<DataQualityReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<NavTabId>("profiling");
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] || null;
@@ -81,57 +97,42 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleNavChange = (id: NavTabId) => {
+    setActiveTab(id);
+    const sectionId = NAV_TO_SECTION_ID[id];
+    if (sectionId) {
+      const el = document.getElementById(sectionId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+  };
+
   return (
     <div
       style={{
         minHeight: "100vh",
-        background: "radial-gradient(circle at top, #101420 0, #050509 55%, #020207 100%)",
-        color: "#f5f5f5",
-        fontFamily:
-          "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        background:
+          "radial-gradient(circle at top, #101420 0, #050509 55%, #020207 100%)",
+        color: dlqColors.textPrimary,
+        fontFamily: dlqTypography.fontFamily,
       }}
     >
       <div
         style={{
           maxWidth: 1200,
           margin: "0 auto",
-          padding: "16px 16px 32px",
+          padding: "8px 16px 32px",
         }}
       >
-        {/* Header */}
-        <header
-          style={{
-            marginBottom: 16,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <div>
-            <h1 style={{ margin: 0, fontSize: 24 }}>
-              DataLakeQ – Data Quality Firewall
-            </h1>
-            <p style={{ margin: 0, fontSize: 13, color: "#aaa" }}>
-              Profiling · Drift · PII · Policy Engine · AutoFix · Alerts ·
-              History · Schema
-            </p>
-          </div>
-          {report && (
-            <div
-              style={{
-                fontSize: 12,
-                color: "#9ea7ff",
-                textAlign: "right",
-              }}
-            >
-              <div style={{ opacity: 0.8 }}>Dataset:</div>
-              <div style={{ fontWeight: 600 }}>{report.dataset_name}</div>
-            </div>
-          )}
-        </header>
+        {/* Header with navigation + dataset selector */}
+        <HeaderBar
+          activeTab={activeTab}
+          onTabChange={handleNavChange}
+          datasetName={report?.dataset_name}
+        />
 
-        {/* Upload + Actions */}
+        {/* File upload + Run button */}
         <section
           style={{
             borderRadius: 10,
@@ -180,7 +181,7 @@ const App: React.FC = () => {
               {loading ? "Analyzing…" : "Run Data Quality Check"}
             </button>
           </div>
-          <div style={{ fontSize: 12, color: "#bbb" }}>
+          <div style={{ fontSize: 12, color: dlqColors.textSecondary }}>
             {file ? (
               <>
                 Selected:{" "}
@@ -220,9 +221,8 @@ const App: React.FC = () => {
               marginTop: 8,
             }}
           >
-            Once you run a check, you’ll see **score, schema changes, PII,
-            AutoFix plan, alerts, and history** laid out in a clean dashboard
-            below.
+            Once you run a check, you’ll see score, schema changes, PII, AutoFix
+            plan, alerts, and history laid out in the dashboard below.
           </p>
         )}
 
@@ -244,9 +244,17 @@ const App: React.FC = () => {
                 gap: 16,
               }}
             >
-              <ScoreCard report={report} />
-              <PolicyGate report={report} />
-              <HistoryPanel report={report} />
+              <div id="section-profiling">
+                <ScoreCard report={report} />
+              </div>
+
+              <div id="section-policy">
+                <PolicyGate report={report} />
+              </div>
+
+              <div id="section-history">
+                <HistoryPanel report={report} />
+              </div>
             </section>
 
             {/* Row 2 – dataset / schema / PII vs AutoFix */}
@@ -265,11 +273,15 @@ const App: React.FC = () => {
                 }}
               >
                 <DatasetSummaryPanel report={report} />
-                <SchemaChangesPanel report={report} />
-                <PIIPanel report={report} />
+                <div id="section-schema">
+                  <SchemaChangesPanel report={report} />
+                </div>
+                <div id="section-pii">
+                  <PIIPanel report={report} />
+                </div>
               </div>
 
-              <div>
+              <div id="section-autofix">
                 <AutofixPanel
                   report={report}
                   onDownload={handleDownloadAutofix}
@@ -286,7 +298,9 @@ const App: React.FC = () => {
                 alignItems: "stretch",
               }}
             >
-              <AlertsPanel alerts={report.alerts} />
+              <div id="section-alerts">
+                <AlertsPanel alerts={report.alerts} />
+              </div>
               <RawReportPanel report={report} />
             </section>
           </main>

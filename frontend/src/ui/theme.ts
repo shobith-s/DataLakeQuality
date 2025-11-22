@@ -1,4 +1,5 @@
 // frontend/src/ui/theme.ts
+import type React from "react";
 
 // Design tokens for DataLakeQ UI
 
