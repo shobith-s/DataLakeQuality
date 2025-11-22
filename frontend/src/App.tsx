@@ -9,7 +9,7 @@ import AutofixPanel from "./components/panels/AutofixPanel";
 import HistoryPanel from "./components/panels/HistoryPanel";
 import RawReportPanel from "./components/panels/RawReportPanel";
 import SchemaChangesPanel from "./components/panels/SchemaChangesPanel";
-import HeaderBar, { type NavTabId } from "./components/layout/HeaderBar";
+import HeaderBar, { NavTabId } from "./components/layout/HeaderBar";
 
 import type { DataQualityReport } from "./types/report";
 import { dlqColors, dlqTypography } from "./ui/theme";
@@ -54,7 +54,7 @@ const App: React.FC = () => {
       if (!res.ok) {
         const text = await res.text();
         throw new Error(
-          `Backend error (${res.status}): ${text || res.statusText}`,
+          `Backend error (${res.status}): ${text || res.statusText}`
         );
       }
 
@@ -124,7 +124,7 @@ const App: React.FC = () => {
           datasetName={report?.dataset_name}
         />
 
-        {/* Phase 3: modern drag & drop uploader */}
+        {/* Drag & drop uploader + run button */}
         <FileDropZone
           file={file}
           onFileSelected={(f) => {
@@ -153,7 +153,7 @@ const App: React.FC = () => {
           </section>
         )}
 
-        {/* Empty state */}
+        {/* Empty state hint */}
         {!report && !loading && (
           <p
             style={{
@@ -163,8 +163,8 @@ const App: React.FC = () => {
               marginBottom: 8,
             }}
           >
-            Once you run a check, you’ll see score, schema changes, PII, AutoFix
-            plan, alerts, and history laid out in the dashboard below.
+            Once you run a check, you’ll see score, schema changes, PII,
+            AutoFix plan, alerts, and history laid out in the dashboard below.
           </p>
         )}
 
@@ -177,13 +177,13 @@ const App: React.FC = () => {
               gap: 16,
             }}
           >
-            {/* Row 1 – core metrics: score, policy, history */}
+            {/* Row 1 – Score (left) + Policy (right) */}
             <section
               style={{
                 display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(260px, minmax(0, 1fr)))",
+                gridTemplateColumns: "2fr 1.2fr",
                 gap: 16,
+                alignItems: "stretch",
               }}
             >
               <div id="section-profiling">
@@ -193,18 +193,20 @@ const App: React.FC = () => {
               <div id="section-policy">
                 <PolicyGate report={report} />
               </div>
-
-              <div id="section-history">
-                <HistoryPanel report={report} />
-              </div>
             </section>
 
-            {/* Row 2 – dataset / schema / PII vs AutoFix */}
+            {/* Row 1.5 – History full width */}
+            <section id="section-history">
+              <HistoryPanel report={report} />
+            </section>
+
+            {/* Row 2 – Left: Dataset + Schema, Right: PII */}
             <section
               style={{
                 display: "grid",
-                gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1.6fr)",
+                gridTemplateColumns: "2fr 1.2fr",
                 gap: 16,
+                alignItems: "flex-start",
               }}
             >
               <div
@@ -218,32 +220,41 @@ const App: React.FC = () => {
                 <div id="section-schema">
                   <SchemaChangesPanel report={report} />
                 </div>
-                <div id="section-pii">
-                  <PIIPanel report={report} />
-                </div>
               </div>
 
+              <div id="section-pii">
+                <PIIPanel report={report} />
+              </div>
+            </section>
+
+            {/* Row 3 – Left: AutoFix, Right: Alerts + Raw JSON */}
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns: "2fr 1.2fr",
+                gap: 16,
+                alignItems: "flex-start",
+              }}
+            >
               <div id="section-autofix">
                 <AutofixPanel
                   report={report}
                   onDownload={handleDownloadAutofix}
                 />
               </div>
-            </section>
 
-            {/* Row 3 – alerts & raw JSON */}
-            <section
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.8fr)",
-                gap: 16,
-                alignItems: "stretch",
-              }}
-            >
-              <div id="section-alerts">
-                <AlertsPanel alerts={report.alerts} />
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <div id="section-alerts">
+                  <AlertsPanel alerts={report.alerts} />
+                </div>
+                <RawReportPanel report={report} />
               </div>
-              <RawReportPanel report={report} />
             </section>
           </main>
         )}
