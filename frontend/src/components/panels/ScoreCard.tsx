@@ -9,6 +9,7 @@ interface Props {
 const ScoreCard: React.FC<Props> = ({ report }) => {
   const score =
     typeof report.overall_score === "number" ? report.overall_score : undefined;
+  const grade = report.score_grade;
 
   return (
     <section
@@ -24,7 +25,7 @@ const ScoreCard: React.FC<Props> = ({ report }) => {
         gap: 16,
       }}
     >
-      <div>
+      <div style={{ flex: 1 }}>
         <h2 style={{ margin: 0, marginBottom: 4, fontSize: 18 }}>
           Data Quality Score
         </h2>
@@ -32,7 +33,49 @@ const ScoreCard: React.FC<Props> = ({ report }) => {
           Higher is better. Based on missing data, outliers, duplicates, PII,
           and drift.
         </p>
+
+        {grade && (
+          <div style={{ marginTop: 6 }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "2px 8px",
+                borderRadius: 999,
+                border: "1px solid #444",
+                fontSize: 12,
+                background: "#050811",
+              }}
+            >
+              <span
+                style={{
+                  fontWeight: 700,
+                  fontSize: 13,
+                }}
+              >
+                {grade.letter}
+              </span>
+              <span style={{ color: "#bbb" }}>{grade.label}</span>
+            </span>
+
+            {grade.reason && (
+              <p
+                style={{
+                  margin: 0,
+                  marginTop: 4,
+                  fontSize: 12,
+                  color: "#999",
+                  maxWidth: 420,
+                }}
+              >
+                {grade.reason}
+              </p>
+            )}
+          </div>
+        )}
       </div>
+
       <div
         style={{
           minWidth: 72,

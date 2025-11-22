@@ -57,6 +57,24 @@ export interface PiiColumn {
   detected_types: string[];
 }
 
+export interface ScoreGrade {
+  letter: string;
+  label: string;
+  reason?: string;
+}
+
+export interface ScoreBreakdown {
+  base?: number;
+  penalty_missing?: number;
+  penalty_outliers?: number;
+  penalty_duplicates?: number;
+  penalty_pii?: number;
+  penalty_drift?: number;
+  total_penalty?: number;
+  final_score?: number;
+  [key: string]: any;
+}
+
 export interface DataQualityReport {
   dataset_name: string;
   run_id: string;
@@ -88,6 +106,9 @@ export interface DataQualityReport {
   autofix_script?: string;
 
   history_snapshot?: HistorySnapshot;
+
+  score_grade?: ScoreGrade;
+  score_breakdown?: ScoreBreakdown;
 
   [key: string]: unknown;
 }
