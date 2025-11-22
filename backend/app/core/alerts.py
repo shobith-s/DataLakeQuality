@@ -11,8 +11,9 @@ class AlertDict(TypedDict):
     message: str
 
 
-MISSING_WARN_THRESHOLD = 0.05  # 5%
-OUTLIER_WARN_THRESHOLD = 0.05  # 5%
+MISSING_WARN_THRESHOLD = 0.05   # 5%
+OUTLIER_WARN_THRESHOLD = 0.05   # 5%
+DUPLICATE_WARN_THRESHOLD = 0.02 # 2%
 
 
 def _to_dict(obj: Any) -> Mapping[str, Any]:
@@ -30,17 +31,33 @@ def build_alerts(report: Any) -> List[AlertDict]:
     """
     Build human-readable alerts from the data quality report.
 
-    This function is intentionally decoupled from your Pydantic models:
-    it works with either:
-      - A Pydantic model instance that has `.dict()`
-      - A plain dict with keys like "missing_ratio", "columns", etc.
+    Works with:
+      - Pydantic models (with .dict())
+      - Plain dicts
     """
     raw = _to_dict(report)
     alerts: List[AlertDict] = []
 
+    summary = _to_dict(raw.get("summary") or {})
+
     # --- Dataset-level metrics ---
-    missing_ratio = float(raw.get("missing_ratio") or 0.0)
-    outlier_ratio = float(raw.get("outlier_ratio") or 0.0)
+    def _safe_float(x: Any, default: float = 0.0) -> float:
+        try:
+            if x is None:
+                return default
+            return float(x)
+        except Exception:
+            return default
+
+    missing_ratio = _safe_float(
+        raw.get("missing_ratio", summary.get("missing_ratio", 0.0))
+    )
+
+    outlier_ratio = _safe_float(
+        raw.get("outlier_ratio", raw.get("overall_outlier_ratio", 0.0))
+    )
+
+    duplicate_ratio = _safe_float(summary.get("duplicate_ratio", 0.0))
 
     if missing_ratio > MISSING_WARN_THRESHOLD:
         alerts.append(
@@ -66,12 +83,25 @@ def build_alerts(report: Any) -> List[AlertDict]:
             )
         )
 
+    if duplicate_ratio > DUPLICATE_WARN_THRESHOLD:
+        alerts.append(
+            AlertDict(
+                level="warning",
+                code="HIGH_DUPLICATE_RATIO",
+                message=(
+                    f"Duplicate row ratio is {duplicate_ratio:.1%}, "
+                    f"which is above the {DUPLICATE_WARN_THRESHOLD:.0%} threshold."
+                ),
+            )
+        )
+
     # --- Column-level metrics ---
     columns = raw.get("columns") or []
     for col in columns:
-        # be defensive: columns might be dicts or Pydantic models
         c = _to_dict(col)
-        name = c.get("name", "<unknown>")
+        # tolerate both "name" and "column"
+        name = c.get("name") or c.get("column") or "<unknown>"
+
         drift_severity = c.get("drift_severity")
         psi = c.get("psi")
         pii_type = c.get("pii_type")
@@ -82,7 +112,10 @@ def build_alerts(report: Any) -> List[AlertDict]:
             level: AlertLevel = "error" if drift_severity == "severe" else "warning"
             msg = f"Drift detected on column '{name}' (severity = {drift_severity}"
             if psi is not None:
-                msg += f", PSI = {psi:.3f}"
+                try:
+                    msg += f", PSI = {float(psi):.3f}"
+                except Exception:
+                    pass
             msg += ")."
 
             alerts.append(
@@ -93,12 +126,12 @@ def build_alerts(report: Any) -> List[AlertDict]:
                 )
             )
 
-        # PII alerts
+        # PII alerts at column level (if your column profiles carry pii_type)
         if pii_type:
             alerts.append(
                 AlertDict(
                     level="warning",
-                    code="PII_DETECTED",
+                    code="PII_DETECTED_COLUMN",
                     message=f"PII of type '{pii_type}' detected in column '{name}'.",
                 )
             )
@@ -120,6 +153,41 @@ def build_alerts(report: Any) -> List[AlertDict]:
                         ),
                     )
                 )
+
+    # --- PII summary alerts ---
+    pii_columns = raw.get("pii_columns") or []
+    pii_column_count = raw.get("pii_column_count")
+    has_pii = bool(
+        raw.get("has_pii")
+        or (pii_column_count or 0) > 0
+        or (len(pii_columns) > 0)
+    )
+
+    if has_pii:
+        names = []
+        for c in pii_columns:
+            cd = _to_dict(c)
+            if cd.get("column"):
+                names.append(cd["column"])
+        if names:
+            alerts.append(
+                AlertDict(
+                    level="warning",
+                    code="PII_DETECTED",
+                    message=(
+                        "PII patterns detected in columns: "
+                        + ", ".join(sorted(set(names)))
+                    ),
+                )
+            )
+        else:
+            alerts.append(
+                AlertDict(
+                    level="warning",
+                    code="PII_DETECTED",
+                    message="PII patterns detected in this dataset.",
+                )
+            )
 
     # --- Policy failures ---
     policy_failures = raw.get("policy_failures") or []
