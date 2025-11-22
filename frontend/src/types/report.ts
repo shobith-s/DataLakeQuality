@@ -101,6 +101,23 @@ export interface SchemaChanges {
   is_breaking: boolean;
 }
 
+/* --- AutoFix --- */
+
+export interface AutofixStep {
+  id: string;
+  label: string;
+  category: string;
+  enabled: boolean;
+  description?: string;
+  code: string;
+}
+
+export interface AutofixPlan {
+  header: string;
+  footer: string;
+  steps: AutofixStep[];
+}
+
 export interface DataQualityReport {
   dataset_name: string;
   run_id: string;
@@ -128,8 +145,8 @@ export interface DataQualityReport {
 
   alerts: Alert[];
 
-  autofix_plan?: unknown;
-  autofix_script?: string;
+  autofix_plan?: AutofixPlan | null;
+  autofix_script?: string | null;
 
   history_snapshot?: HistorySnapshot;
 

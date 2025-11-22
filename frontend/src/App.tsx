@@ -60,10 +60,10 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadAutofix = () => {
-    if (!report || !report.autofix_script) return;
+  const handleDownloadAutofix = (script: string | undefined) => {
+    if (!report || !script) return;
 
-    const blob = new Blob([report.autofix_script], {
+    const blob = new Blob([script], {
       type: "text/x-python;charset=utf-8",
     });
 
@@ -97,7 +97,8 @@ const App: React.FC = () => {
           DataLakeQ – Data Quality Firewall
         </h1>
         <p style={{ margin: 0, fontSize: 14, color: "#aaa" }}>
-          Profiling · Drift · PII · Policy Engine · AutoFix · Alerts · History · Schema
+          Profiling · Drift · PII · Policy Engine · AutoFix · Alerts · History ·
+          Schema
         </p>
       </header>
 
