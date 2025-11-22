@@ -2,6 +2,7 @@
 
 from typing import List, Literal, Mapping, Any, TypedDict
 
+
 AlertLevel = Literal["error", "warning", "info"]
 
 
@@ -19,8 +20,6 @@ DUPLICATE_WARN_THRESHOLD = 0.02 # 2%
 def _to_dict(obj: Any) -> Mapping[str, Any]:
     """
     Helper to turn a Pydantic model or other object into a dict-like mapping.
-    - If it has `.dict()`, use that (Pydantic BaseModel).
-    - Otherwise assume it's already a mapping (dict).
     """
     if hasattr(obj, "dict"):
         return obj.dict()  # type: ignore[no-any-return]
@@ -30,17 +29,12 @@ def _to_dict(obj: Any) -> Mapping[str, Any]:
 def build_alerts(report: Any) -> List[AlertDict]:
     """
     Build human-readable alerts from the data quality report.
-
-    Works with:
-      - Pydantic models (with .dict())
-      - Plain dicts
     """
     raw = _to_dict(report)
     alerts: List[AlertDict] = []
 
     summary = _to_dict(raw.get("summary") or {})
 
-    # --- Dataset-level metrics ---
     def _safe_float(x: Any, default: float = 0.0) -> float:
         try:
             if x is None:
@@ -49,6 +43,7 @@ def build_alerts(report: Any) -> List[AlertDict]:
         except Exception:
             return default
 
+    # --- Dataset-level metrics ---
     missing_ratio = _safe_float(
         raw.get("missing_ratio", summary.get("missing_ratio", 0.0))
     )
@@ -99,7 +94,6 @@ def build_alerts(report: Any) -> List[AlertDict]:
     columns = raw.get("columns") or []
     for col in columns:
         c = _to_dict(col)
-        # tolerate both "name" and "column"
         name = c.get("name") or c.get("column") or "<unknown>"
 
         drift_severity = c.get("drift_severity")
@@ -107,7 +101,6 @@ def build_alerts(report: Any) -> List[AlertDict]:
         pii_type = c.get("pii_type")
         col_missing_ratio = c.get("missing_ratio")
 
-        # Drift alerts
         if drift_severity in {"moderate", "severe"}:
             level: AlertLevel = "error" if drift_severity == "severe" else "warning"
             msg = f"Drift detected on column '{name}' (severity = {drift_severity}"
@@ -126,7 +119,6 @@ def build_alerts(report: Any) -> List[AlertDict]:
                 )
             )
 
-        # PII alerts at column level (if your column profiles carry pii_type)
         if pii_type:
             alerts.append(
                 AlertDict(
@@ -136,7 +128,6 @@ def build_alerts(report: Any) -> List[AlertDict]:
                 )
             )
 
-        # High missing per column
         if col_missing_ratio is not None:
             try:
                 col_missing_ratio_f = float(col_missing_ratio)
@@ -215,6 +206,50 @@ def build_alerts(report: Any) -> List[AlertDict]:
                 ),
             )
         )
+
+    # --- Schema change alerts ---
+    schema_changes = raw.get("schema_changes") or {}
+    if schema_changes:
+        sc = _to_dict(schema_changes)
+        status = sc.get("status")
+        added = sc.get("added_columns") or []
+        removed = sc.get("removed_columns") or []
+        type_changes = sc.get("type_changes") or []
+        pii_changes = sc.get("pii_changes") or []
+        is_breaking = bool(sc.get("is_breaking"))
+
+        if is_breaking:
+            alerts.append(
+                AlertDict(
+                    level="error",
+                    code="BREAKING_SCHEMA_CHANGE",
+                    message=(
+                        "Breaking schema changes detected "
+                        f"(added={len(added)}, removed={len(removed)}, "
+                        f"type_changes={len(type_changes)}, pii_changes={len(pii_changes)})."
+                    ),
+                )
+            )
+        elif status == "changed":
+            alerts.append(
+                AlertDict(
+                    level="warning",
+                    code="SCHEMA_CHANGED",
+                    message=(
+                        "Non-breaking schema changes detected "
+                        f"(added={len(added)}, removed={len(removed)}, "
+                        f"type_changes={len(type_changes)}, pii_changes={len(pii_changes)})."
+                    ),
+                )
+            )
+        elif status == "baseline_created":
+            alerts.append(
+                AlertDict(
+                    level="info",
+                    code="SCHEMA_BASELINE_CREATED",
+                    message="Schema baseline created from this run.",
+                )
+            )
 
     # --- Fallback: everything looks fine ---
     if not alerts:

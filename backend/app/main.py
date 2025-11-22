@@ -10,7 +10,7 @@ import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core import profiling, outliers, pii, drift, contracts, autofix
+from app.core import profiling, outliers, pii, drift, contracts, autofix, schema as schema_core
 from app.core.alerts import build_alerts
 from app.utils import history as history_utils
 
@@ -18,7 +18,7 @@ from app.utils import history as history_utils
 app = FastAPI(
     title="DataLakeQ – Data Quality Firewall",
     version="0.1.0",
-    description="Data observability engine: profiling, drift, PII, policy, AutoFix, alerts.",
+    description="Data observability engine: profiling, drift, PII, policy, AutoFix, alerts, schema changes.",
 )
 
 # CORS – adjust origins to match your frontend
@@ -310,14 +310,8 @@ def _compute_score(
 ) -> Tuple[float, Dict[str, float], Dict[str, Any]]:
     """
     Compute a Data Quality Index and a human-readable grade.
-
-    We treat:
-      - missing / outliers / duplicates as ratios in [0,1]
-      - PII presence as a flat penalty
-      - drift severity as discrete penalty
     """
 
-    # Cap ratios at 1.0 for penalty scaling
     mr = max(0.0, min(missing_ratio, 1.0))
     or_ = max(0.0, min(outlier_ratio, 1.0))
     dr = max(0.0, min(duplicate_ratio, 1.0))
@@ -326,7 +320,6 @@ def _compute_score(
     penalty_missing = min(mr / 0.20, 1.0) * 35.0
     penalty_outliers = min(or_ / 0.20, 1.0) * 25.0
     penalty_duplicates = min(dr / 0.20, 1.0) * 15.0
-
     penalty_pii = 10.0 if has_pii else 0.0
 
     drift_key = (drift_severity or "").lower()
@@ -362,7 +355,6 @@ def _compute_score(
         "final_score": score,
     }
 
-    # Grade
     if score >= 90.0:
         letter = "A"
         label = "Excellent"
@@ -404,13 +396,7 @@ def _compute_score(
 
 def _normalize_metrics(report: Dict[str, Any]) -> None:
     """
-    Ensure the report has standard keys:
-    - missing_ratio
-    - outlier_ratio
-    - duplicate_ratio
-    - overall_score
-    - score_breakdown
-    - score_grade
+    Ensure the report has standard keys and compute score + grade.
     """
     summary = report.get("summary") or {}
 
@@ -522,7 +508,14 @@ def _build_full_report(df: Any, dataset_name: str) -> Dict[str, Any]:
     # 4) Drift / PSI
     drift_result = _run_drift(df=df, dataset_name=dataset_name)
 
-    # 5) Contracts: suggestion + policy evaluation
+    # 5) Schema changes vs baseline
+    schema_changes = schema_core.detect_schema_changes(
+        dataset_name=dataset_name,
+        profile=profile,
+        pii_result=pii_result,
+    )
+
+    # 6) Contracts: suggestion + policy evaluation
     contract_suggestion = _run_contract_suggestion(df=df, dataset_name=dataset_name)
     policy_result = _run_policy_engine(
         profile=profile,
@@ -532,7 +525,7 @@ def _build_full_report(df: Any, dataset_name: str) -> Dict[str, Any]:
         contract_suggestion=contract_suggestion,
     )
 
-    # 6) AutoFix (plan + script)
+    # 7) AutoFix (plan + script)
     autofix_plan, autofix_script = _run_autofix(
         df=df,
         dataset_name=dataset_name,
@@ -541,7 +534,7 @@ def _build_full_report(df: Any, dataset_name: str) -> Dict[str, Any]:
         outlier_result=outlier_result,
     )
 
-    # 7) Assemble base report dict
+    # 8) Assemble base report dict
     report_base: Dict[str, Any] = {
         "dataset_name": dataset_name,
         "run_id": run_id,
@@ -550,23 +543,24 @@ def _build_full_report(df: Any, dataset_name: str) -> Dict[str, Any]:
         **pii_result,
         **outlier_result,
         **drift_result,
+        "schema_changes": schema_changes,
         "contract_suggestion": contract_suggestion,
         **policy_result,
         "autofix_plan": autofix_plan,
         "autofix_script": autofix_script,
     }
 
-    # 8) Normalize key metrics + compute score & grade
+    # 9) Normalize key metrics + compute score & grade
     _normalize_metrics(report_base)
 
-    # 9) History snapshot
+    # 10) History snapshot
     history_snapshot = _run_history_snapshot(
         dataset_name=dataset_name,
         report=report_base,
     )
     report_base["history_snapshot"] = history_snapshot
 
-    # 10) Alerts
+    # 11) Alerts
     report_base["alerts"] = build_alerts(report_base)
 
     return report_base
