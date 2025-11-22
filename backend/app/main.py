@@ -1,35 +1,41 @@
-# backend/app/main.py
-
 from __future__ import annotations
 
-import uuid
+import io
+import json
 from datetime import datetime
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, Tuple
+from uuid import uuid4
 
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
-from app.core import profiling, outliers, pii, drift, contracts, autofix, schema as schema_core
-from app.core.alerts import build_alerts
-from app.utils import history as history_utils
-
-
-app = FastAPI(
-    title="DataLakeQ – Data Quality Firewall",
-    version="0.1.0",
-    description="Data observability engine: profiling, drift, PII, policy, AutoFix, alerts, schema changes.",
+from app.core import (
+    profiling,
+    outliers,
+    pii,
+    drift,
+    autofix,
+    alerts,
+    history as history_core,
 )
+from app.core import insights as insights_core
+from app.models.report import (
+    DataQualityReport,
+    Summary,
+    BasicProfile,
+    HistorySnapshot,
+)
+from app.utils import io as io_utils
 
-# CORS – adjust origins to match your frontend
+
+app = FastAPI(title="DataLakeQ – Data Quality Firewall")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=["*"],  # adjust in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,589 +43,352 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Helpers – IO
+# Helper models
 # ---------------------------------------------------------------------------
 
-def _load_dataframe(file: UploadFile) -> Tuple[pd.DataFrame, str]:
+
+class AutofixCleanOptions(BaseModel):
     """
-    Centralized CSV loading.
+    Options for one-click cleaning. For hackathon purposes we use a small,
+    opinionated set of defaults but expose the hook for future extension.
+    """
+
+    fill_numeric_missing: bool = True
+    fill_categorical_missing: bool = True
+    clip_outliers: bool = True
+    parse_dates: bool = True
+    mask_pii: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+def _load_dataframe(upload: UploadFile) -> Tuple[pd.DataFrame, str]:
+    """
+    Centralised CSV loader.
+
+    Tries to use app.utils.io.read_upload_to_dataframe if present,
+    otherwise falls back to a simple pandas.read_csv using UTF-8.
     """
     try:
-        df = pd.read_csv(file.file)
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to parse CSV: {exc}",
-        ) from exc
-
-    raw_name = file.filename or "dataset"
-    dataset_name = raw_name.rsplit(".", 1)[0]
+        # Preferred path: your dedicated utility
+        df = io_utils.read_upload_to_dataframe(upload)  # type: ignore[attr-defined]
+    except AttributeError:
+        # Fallback if the utility name differs or does not exist
+        contents = upload.file.read()
+        upload.file.seek(0)
+        df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+    dataset_name = upload.filename.rsplit(".", 1)[0] if upload.filename else "dataset"
     return df, dataset_name
 
 
-# ---------------------------------------------------------------------------
-# Helpers – Adapters for core modules
-# ---------------------------------------------------------------------------
-
-def _run_profiling(df: Any, dataset_name: str) -> Dict[str, Any]:
-    """
-    Adapter for profiling module.
-    """
-    if hasattr(profiling, "profile_dataframe"):
-        try:
-            return profiling.profile_dataframe(df, dataset_name=dataset_name)  # type: ignore[no-any-return]
-        except TypeError:
-            return profiling.profile_dataframe(df)  # type: ignore[no-any-return]
-
-    if hasattr(profiling, "profile_dataset"):
-        return profiling.profile_dataset(df)  # type: ignore[no-any-return]
-
-    raise HTTPException(
-        status_code=500,
-        detail=(
-            "Profiling module misconfigured: expected a function "
-            "`profile_dataframe` or `profile_dataset` in app.core.profiling."
-        ),
-    )
-
-
-def _run_pii(df: Any, profile: Dict[str, Any]) -> Dict[str, Any]:
-    if not hasattr(pii, "detect_pii"):
-        return {}
-
-    fn = pii.detect_pii  # type: ignore[attr-defined]
-
-    for kwargs in (
-        {"df": df, "profile": profile},
-        {"df": df},
-    ):
-        try:
-            return fn(**kwargs)  # type: ignore[no-any-return]
-        except TypeError:
-            continue
-
-    try:
-        return fn(df)  # type: ignore[no-any-return]
-    except TypeError:
-        return {}
-
-
-def _run_outliers(df: Any, profile: Dict[str, Any]) -> Dict[str, Any]:
-    if not hasattr(outliers, "detect_outliers"):
-        return {}
-
-    fn = outliers.detect_outliers  # type: ignore[attr-defined]
-
-    for kwargs in (
-        {"df": df, "profile": profile},
-        {"df": df},
-    ):
-        try:
-            return fn(**kwargs)  # type: ignore[no-any-return]
-        except TypeError:
-            continue
-
-    try:
-        return fn(df)  # type: ignore[no-any-return]
-    except TypeError:
-        return {}
-
-
-def _run_drift(df: Any, dataset_name: str) -> Dict[str, Any]:
-    candidates = ["compute_drift", "detect_drift", "compute_psi", "calculate_drift"]
-
-    for name in candidates:
-        if not hasattr(drift, name):
-            continue
-
-        fn = getattr(drift, name)
-
-        for kwargs in (
-            {"df": df, "dataset_name": dataset_name},
-            {"df": df},
-        ):
-            try:
-                return fn(**kwargs)  # type: ignore[no-any-return]
-            except TypeError:
-                continue
-
-        try:
-            return fn(df)  # type: ignore[no-any-return]
-        except TypeError:
-            continue
-
-    return {}
-
-
-def _run_contract_suggestion(df: Any, dataset_name: str) -> Dict[str, Any]:
-    candidates = [
-        "generate_contract_suggestion",
-        "suggest_contracts",
-        "suggest_contract",
-    ]
-
-    for name in candidates:
-        if not hasattr(contracts, name):
-            continue
-
-        fn = getattr(contracts, name)
-
-        for kwargs in (
-            {"df": df, "dataset_name": dataset_name},
-            {"df": df},
-        ):
-            try:
-                return fn(**kwargs)  # type: ignore[no-any-return]
-            except TypeError:
-                continue
-
-        try:
-            return fn(df)  # type: ignore[no-any-return]
-        except TypeError:
-            continue
-
-    return {}
-
-
-def _run_policy_engine(
-    profile: Dict[str, Any],
-    drift_result: Dict[str, Any],
+def _build_contract_yaml(
+    df: pd.DataFrame,
+    profile: BasicProfile,
     pii_result: Dict[str, Any],
-    outlier_result: Dict[str, Any],
-    contract_suggestion: Dict[str, Any],
-) -> Dict[str, Any]:
-    candidates = ["evaluate_policy", "run_policy_engine"]
-
-    for name in candidates:
-        if not hasattr(contracts, name):
-            continue
-
-        fn = getattr(contracts, name)
-
-        try:
-            return fn(
-                profile=profile,
-                drift_result=drift_result,
-                pii_result=pii_result,
-                outlier_result=outlier_result,
-                contract_suggestion=contract_suggestion,
-            )  # type: ignore[no-any-return]
-        except TypeError:
-            try:
-                return fn(
-                    {
-                        "profile": profile,
-                        "drift_result": drift_result,
-                        "pii_result": pii_result,
-                        "outlier_result": outlier_result,
-                        "contract_suggestion": contract_suggestion,
-                    }
-                )  # type: ignore[no-any-return]
-            except TypeError:
-                continue
-
-    return {
-        "policy_passed": True,
-        "policy_failures": [],
-    }
-
-
-def _run_autofix(
-    df: Any,
     dataset_name: str,
-    profile: Dict[str, Any],
-    pii_result: Dict[str, Any],
-    outlier_result: Dict[str, Any],
-) -> Tuple[Any, str]:
-    candidates = ["build_autofix", "generate_autofix"]
+) -> str:
+    """
+    Generate a minimal data contract YAML based on current dataset profile.
+    Dependency-free (no pyyaml), so we just construct the text manually.
+    """
+    inferred_types = profile.inferred_types or {}
+    missing_by_col = profile.missing_by_column or {}
+    pii_cols = pii_result.get("pii_columns") or []
 
-    for name in candidates:
-        if not hasattr(autofix, name):
-            continue
+    lines: list[str] = []
+    lines.append(f"dataset: {dataset_name}")
+    lines.append("schema:")
+    for col in df.columns:
+        col_type = inferred_types.get(col, "string")
+        missing = int(missing_by_col.get(col, 0))
+        nullable = "true" if missing > 0 else "false"
+        lines.append(f"  - name: {col}")
+        lines.append(f"    type: {col_type}")
+        lines.append(f"    nullable: {nullable}")
 
-        fn = getattr(autofix, name)
+    if pii_cols:
+        lines.append("pii:")
+        for item in pii_cols:
+            col = item.get("column")
+            detected_types = item.get("detected_types") or []
+            if detected_types:
+                # Basic inline array representation
+                types_text = "[" + ", ".join(detected_types) + "]"
+            else:
+                types_text = "[]"
+            lines.append(f"  - column: {col}")
+            lines.append(f"    types: {types_text}")
 
-        try:
-            return fn(
-                df=df,
-                dataset_name=dataset_name,
-                profile=profile,
-                pii_result=pii_result,
-                outlier_result=outlier_result,
-            )  # type: ignore[no-any-return]
-        except TypeError:
-            try:
-                return fn(df=df, dataset_name=dataset_name)  # type: ignore[no-any-return]
-            except TypeError:
+    # Basic quality expectations (can be tuned later)
+    lines.append("expectations:")
+    lines.append("  max_missing_ratio: 0.2")
+    lines.append("  max_outlier_ratio: 0.2")
+
+    return "\n".join(lines)
+
+
+def _apply_autofix_clean(
+    df: pd.DataFrame,
+    options: AutofixCleanOptions,
+) -> pd.DataFrame:
+    """
+    Simple AutoFix 3.0 implementation:
+
+    - fill numeric NaNs with median
+    - fill categorical NaNs with mode
+    - clip numeric values to 1.5 * IQR
+    - parse ISO-like date columns (columns containing 'date' in name)
+    - basic PII masking (emails/phones) based on column name heuristics
+    """
+    result = df.copy()
+
+    # Numeric handling
+    numeric_cols = result.select_dtypes(include=["number"]).columns
+    if options.fill_numeric_missing:
+        for col in numeric_cols:
+            median = result[col].median()
+            result[col] = result[col].fillna(median)
+
+    if options.clip_outliers:
+        for col in numeric_cols:
+            series = result[col].astype(float)
+            q1 = series.quantile(0.25)
+            q3 = series.quantile(0.75)
+            iqr = q3 - q1
+            if iqr == 0:
+                continue
+            lower = q1 - 1.5 * iqr
+            upper = q3 + 1.5 * iqr
+            result[col] = series.clip(lower=lower, upper=upper)
+
+    # Categorical handling
+    if options.fill_categorical_missing:
+        cat_cols = result.select_dtypes(include=["object"]).columns
+        for col in cat_cols:
+            mode_val = result[col].mode(dropna=True)
+            if not mode_val.empty:
+                result[col] = result[col].fillna(mode_val.iloc[0])
+
+    # Date parsing (simple heuristic on column name)
+    if options.parse_dates:
+        for col in result.columns:
+            if "date" in col.lower():
                 try:
-                    return fn(df)  # type: ignore[no-any-return]
-                except TypeError:
+                    result[col] = pd.to_datetime(result[col]).dt.strftime("%Y-%m-%d")
+                except Exception:
+                    # best-effort only
                     continue
 
-    empty_plan: List[Any] = []
-    return empty_plan, ""
+    # PII masking (name-based heuristic)
+    if options.mask_pii:
+        object_cols = result.select_dtypes(include=["object"]).columns
+        for col in object_cols:
+            lower_name = col.lower()
+            if "email" in lower_name:
+                # mask local part of emails
+                result[col] = result[col].astype(str).str.replace(
+                    r"(^[^@]+)@",
+                    "***@",
+                    regex=True,
+                )
+            if "phone" in lower_name or "mobile" in lower_name:
+                # mask all but last 4 digits
+                result[col] = (
+                    result[col]
+                    .astype(str)
+                    .str.replace(r"[0-9](?=[0-9]{4})", "*", regex=True)
+                )
+
+    return result
 
 
-def _run_history_snapshot(dataset_name: str, report: Dict[str, Any]) -> Dict[str, Any]:
-    if hasattr(history_utils, "save_and_summarize_run"):
-        try:
-            snapshot = history_utils.save_and_summarize_run(
-                dataset_name=dataset_name,
-                report=report,
-            )
-            if isinstance(snapshot, dict):
-                snapshot.setdefault("points", [])
-                return snapshot
-        except TypeError:
-            pass
-
-    if hasattr(history_utils, "save_run_and_summarize"):
-        try:
-            snapshot = history_utils.save_run_and_summarize(
-                dataset_name=dataset_name,
-                report=report,
-            )
-            if isinstance(snapshot, dict):
-                snapshot.setdefault("points", [])
-                return snapshot
-        except TypeError:
-            pass
-
-    if hasattr(history_utils, "save_run"):
-        try:
-            history_utils.save_run(dataset_name, report)  # type: ignore[arg-type]
-        except TypeError:
-            try:
-                history_utils.save_run(dataset_name=dataset_name, report=report)  # type: ignore[arg-type]
-            except TypeError:
-                pass
-
-    return {"points": []}
-
-
-# ---------------------------------------------------------------------------
-# Metric normalization & scoring
-# ---------------------------------------------------------------------------
-
-def _compute_score(
-    missing_ratio: float,
-    outlier_ratio: float,
-    duplicate_ratio: float,
-    has_pii: bool,
-    drift_severity: str | None,
-) -> Tuple[float, Dict[str, float], Dict[str, Any]]:
+def _build_full_report(df: pd.DataFrame, dataset_name: str) -> DataQualityReport:
     """
-    Compute a Data Quality Index and a human-readable grade.
+    Orchestrates profiling, outliers, PII, drift, policy, history, insights
+    and returns a fully-populated DataQualityReport.
     """
+    # 1. Profiling
+    profile_dict = profiling.profile_dataset(df)
+    profile = BasicProfile(**profile_dict["basic_profile"])
+    summary = Summary(**profile_dict["summary"])
 
-    mr = max(0.0, min(missing_ratio, 1.0))
-    or_ = max(0.0, min(outlier_ratio, 1.0))
-    dr = max(0.0, min(duplicate_ratio, 1.0))
+    # 2. PII detection
+    pii_result: Dict[str, Any] = pii.detect_pii(df)
 
-    # Penalties (max when ratio >= 0.20)
-    penalty_missing = min(mr / 0.20, 1.0) * 35.0
-    penalty_outliers = min(or_ / 0.20, 1.0) * 25.0
-    penalty_duplicates = min(dr / 0.20, 1.0) * 15.0
-    penalty_pii = 10.0 if has_pii else 0.0
+    # 3. Outliers
+    outlier_result: Dict[str, Any] = outliers.profile_outliers(df)
 
-    drift_key = (drift_severity or "").lower()
-    drift_penalty_map = {
-        "severe": 15.0,
-        "high": 15.0,
-        "moderate": 5.0,
-    }
-    penalty_drift = drift_penalty_map.get(drift_key, 0.0)
-
-    total_penalty = (
-        penalty_missing
-        + penalty_outliers
-        + penalty_duplicates
-        + penalty_pii
-        + penalty_drift
+    # 4. Drift + history snapshot
+    drift_result: Dict[str, Any] = drift.compute_drift(df=df, dataset_name=dataset_name)
+    history_snapshot_dict: Dict[str, Any] = history_core.get_history_snapshot(
+        dataset_name
     )
+    history_snapshot = HistorySnapshot(**history_snapshot_dict)
 
-    score = 100.0 - total_penalty
-    if score < 0.0:
-        score = 0.0
-    if score > 100.0:
-        score = 100.0
+    # 5. AutoFix plan & script (existing functionality)
+    autofix_plan, autofix_script = autofix.build_autofix(df, profile_dict, pii_result)
 
-    breakdown: Dict[str, float] = {
-        "base": 100.0,
-        "penalty_missing": penalty_missing,
-        "penalty_outliers": penalty_outliers,
-        "penalty_duplicates": penalty_duplicates,
-        "penalty_pii": penalty_pii,
-        "penalty_drift": penalty_drift,
-        "total_penalty": total_penalty,
-        "final_score": score,
-    }
-
-    if score >= 90.0:
-        letter = "A"
-        label = "Excellent"
-    elif score >= 75.0:
-        letter = "B"
-        label = "Good"
-    elif score >= 60.0:
-        letter = "C"
-        label = "Fair"
-    else:
-        letter = "D"
-        label = "Poor"
-
-    reasons: List[str] = []
-    if penalty_missing > 0.5:
-        reasons.append("missing values")
-    if penalty_outliers > 0.5:
-        reasons.append("outliers")
-    if penalty_duplicates > 0.5:
-        reasons.append("duplicates")
-    if penalty_pii > 0.5:
-        reasons.append("PII columns")
-    if penalty_drift > 0.5:
-        reasons.append("drift")
-
-    if reasons:
-        reason = "Score reduced due to " + ", ".join(reasons) + "."
-    else:
-        reason = "Dataset looks very clean across key quality dimensions."
-
-    grade: Dict[str, Any] = {
-        "letter": letter,
-        "label": label,
-        "reason": reason,
-    }
-
-    return score, breakdown, grade
-
-
-def _normalize_metrics(report: Dict[str, Any]) -> None:
-    """
-    Ensure the report has standard keys and compute score + grade.
-    """
-    summary = report.get("summary") or {}
-
-    def _safe_float(x: Any, default: float = 0.0) -> float:
-        try:
-            if x is None:
-                return default
-            return float(x)
-        except Exception:
-            return default
-
-    # ----- missing_ratio -----
-    missing_ratio = report.get("missing_ratio")
-    if missing_ratio is None:
-        missing_ratio = summary.get("missing_ratio")
-
-    if missing_ratio is None:
-        total_missing = summary.get("total_missing_cells")
-        row_count = summary.get("row_count")
-        col_count = summary.get("column_count")
-        if total_missing is not None and row_count and col_count:
-            try:
-                missing_ratio = float(total_missing) / float(row_count * col_count)
-            except Exception:
-                missing_ratio = 0.0
-
-    missing_ratio = _safe_float(missing_ratio, 0.0)
-    report["missing_ratio"] = missing_ratio
-
-    # ----- outlier_ratio -----
-    outlier_ratio = report.get("outlier_ratio")
-    if outlier_ratio is None:
-        outlier_ratio = report.get("overall_outlier_ratio")
-
-    if outlier_ratio is None:
-        total_outliers = report.get("total_outliers")
-        total_numeric_values = report.get("total_numeric_values")
-        if total_outliers is not None and total_numeric_values:
-            try:
-                outlier_ratio = float(total_outliers) / float(total_numeric_values)
-            except Exception:
-                outlier_ratio = 0.0
-
-    outlier_ratio = _safe_float(outlier_ratio, 0.0)
-    report["outlier_ratio"] = outlier_ratio
-
-    # ----- duplicate_ratio -----
-    duplicate_ratio = report.get("duplicate_ratio")
-    if duplicate_ratio is None:
-        duplicate_ratio = summary.get("duplicate_ratio")
-
-    if duplicate_ratio is None:
-        duplicate_rows = summary.get("duplicate_rows")
-        row_count = summary.get("row_count")
-        if duplicate_rows is not None and row_count:
-            try:
-                duplicate_ratio = float(duplicate_rows) / float(row_count)
-            except Exception:
-                duplicate_ratio = 0.0
-
-    duplicate_ratio = _safe_float(duplicate_ratio, 0.0)
-    report["duplicate_ratio"] = duplicate_ratio
-
-    # ----- has_pii + drift severity -----
-    has_pii = bool(
-        report.get("has_pii")
-        or (report.get("pii_column_count") or 0) > 0
-        or (len(report.get("pii_columns") or []) > 0)
+    # 6. Policy + alerts
+    policy_result: Dict[str, Any] = alerts.evaluate_policy_and_alerts(
+        summary=summary,
+        outlier_result=outlier_result,
+        pii_result=pii_result,
+        drift_result=drift_result,
+        autofix_plan=autofix_plan,
     )
+    pipeline_passed: bool = policy_result["pipeline_passed"]
+    policy_failures = policy_result["policy_failures"]
+    alert_items = policy_result["alerts"]
 
-    drift_severity = report.get("psi_severity") or report.get("drift_severity")
+    # Derived metrics
+    missing_ratio = float(summary.missing_ratio)
+    outlier_ratio = float(outlier_result.get("overall_outlier_ratio", 0.0))
+    overall_score = float(policy_result.get("overall_score", 0.0))
 
-    # ----- overall_score + breakdown + grade -----
-    score, breakdown, grade = _compute_score(
+    # 7. Contract YAML (inline preview)
+    contract_yaml = _build_contract_yaml(df, profile, pii_result, dataset_name)
+
+    # 8. "AI-style" heuristic insights
+    insight_payload: Dict[str, Any] = {
+        "missing_ratio": missing_ratio,
+        "outlier_ratio": outlier_ratio,
+        "has_pii": bool(pii_result.get("has_pii")),
+        "pii_columns": pii_result.get("pii_columns") or [],
+        "drift_severity": drift_result.get("severity"),
+        "schema_change_status": drift_result.get("schema_change_status"),
+        "overall_score": overall_score,
+        "policy_passed": pipeline_passed,
+    }
+    insights = insights_core.generate_insights(insight_payload)
+
+    # 9. Persist history for this run
+    run_id = str(uuid4())
+    timestamp = datetime.utcnow()
+    history_core.append_run(
+        dataset_name=dataset_name,
+        run_id=run_id,
+        timestamp=timestamp,
+        score=overall_score,
         missing_ratio=missing_ratio,
         outlier_ratio=outlier_ratio,
-        duplicate_ratio=duplicate_ratio,
-        has_pii=has_pii,
-        drift_severity=drift_severity,
     )
 
-    report["overall_score"] = score
-    report["score_breakdown"] = breakdown
-    report["score_grade"] = grade
-
-
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
-
-def _build_full_report(df: Any, dataset_name: str) -> Dict[str, Any]:
-    """
-    Orchestrates all core engines (profiling, PII, drift, contracts, etc.)
-    into a single report dict.
-    """
-
-    run_id = str(uuid.uuid4())
-    timestamp = datetime.utcnow().isoformat() + "Z"
-
-    # 1) Core profiling
-    profile = _run_profiling(df, dataset_name=dataset_name)
-
-    # 2) PII
-    pii_result = _run_pii(df=df, profile=profile)
-
-    # 3) Outliers
-    outlier_result = _run_outliers(df=df, profile=profile)
-
-    # 4) Drift / PSI
-    drift_result = _run_drift(df=df, dataset_name=dataset_name)
-
-    # 5) Schema changes vs baseline
-    schema_changes = schema_core.detect_schema_changes(
+    # 10. Construct the final DataQualityReport
+    report = DataQualityReport(
         dataset_name=dataset_name,
-        profile=profile,
-        pii_result=pii_result,
+        run_id=run_id,
+        timestamp=timestamp,
+        summary=summary,
+        basic_profile=profile,
+        pii_columns=[
+            {
+                "column": c["column"],
+                "detected_types": c.get("detected_types", []),
+            }
+            for c in pii_result.get("pii_columns", [])
+        ],
+        pii_column_count=int(pii_result.get("pii_column_count", 0)),
+        has_pii=bool(pii_result.get("has_pii", False)),
+        columns=[
+            {
+                "column": c["column"],
+                "mean": c.get("mean"),
+                "std": c.get("std"),
+                "outlier_count": c.get("outlier_count", 0),
+                "value_count": c.get("value_count", 0),
+                "outlier_ratio": c.get("outlier_ratio", 0.0),
+                "severity": c.get("severity", "none"),
+            }
+            for c in outlier_result.get("columns", [])
+        ],
+        total_outliers=int(outlier_result.get("total_outliers", 0)),
+        total_numeric_values=int(outlier_result.get("total_numeric_values", 0)),
+        overall_outlier_ratio=float(
+            outlier_result.get("overall_outlier_ratio", 0.0)
+        ),
+        contract_suggestion={},  # kept for backward compatibility if frontend still reads it
+        policy_passed=pipeline_passed,
+        policy_failures=policy_failures,
+        autofix_plan=autofix_plan,
+        autofix_script=autofix_script,
+        missing_ratio=missing_ratio,
+        outlier_ratio=outlier_ratio,
+        overall_score=overall_score,
+        history_snapshot=history_snapshot,
+        alerts=alert_items,
+        insights=insights,
+        contract_yaml=contract_yaml,
     )
-
-    # 6) Contracts: suggestion + policy evaluation
-    contract_suggestion = _run_contract_suggestion(df=df, dataset_name=dataset_name)
-    policy_result = _run_policy_engine(
-        profile=profile,
-        drift_result=drift_result,
-        pii_result=pii_result,
-        outlier_result=outlier_result,
-        contract_suggestion=contract_suggestion,
-    )
-
-    # 7) AutoFix (plan + script)
-    autofix_plan, autofix_script = _run_autofix(
-        df=df,
-        dataset_name=dataset_name,
-        profile=profile,
-        pii_result=pii_result,
-        outlier_result=outlier_result,
-    )
-
-    # 8) Assemble base report dict
-    report_base: Dict[str, Any] = {
-        "dataset_name": dataset_name,
-        "run_id": run_id,
-        "timestamp": timestamp,
-        **profile,
-        **pii_result,
-        **outlier_result,
-        **drift_result,
-        "schema_changes": schema_changes,
-        "contract_suggestion": contract_suggestion,
-        **policy_result,
-        "autofix_plan": autofix_plan,
-        "autofix_script": autofix_script,
-    }
-
-    # 9) Normalize key metrics + compute score & grade
-    _normalize_metrics(report_base)
-
-    # 10) History snapshot
-    history_snapshot = _run_history_snapshot(
-        dataset_name=dataset_name,
-        report=report_base,
-    )
-    report_base["history_snapshot"] = history_snapshot
-
-    # 11) Alerts
-    report_base["alerts"] = build_alerts(report_base)
-
-    return report_base
+    return report
 
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
+
 @app.get("/health")
-def health_check() -> Dict[str, str]:
-    return {"status": "ok", "service": "DataLakeQ"}
+def health() -> Dict[str, str]:
+    """
+    Simple liveness probe.
+    """
+    return {"status": "ok"}
 
 
 @app.post("/analyze")
-async def analyze_dataset(file: UploadFile = File(...)) -> Dict[str, Any]:
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only .csv files are supported.")
+async def analyze_dataset(file: UploadFile = File(...)) -> JSONResponse:
+    """
+    Main DataLakeQ entrypoint.
+
+    Accepts a CSV file, runs profiling, outlier detection, PII scan,
+    drift comparison, policy evaluation, history logging, insight generation,
+    and returns a DataQualityReport JSON object.
+    """
+    if not file:
+        raise HTTPException(status_code=400, detail="File is required")
 
     df, dataset_name = _load_dataframe(file)
     report = _build_full_report(df=df, dataset_name=dataset_name)
-    return report
+    # Use Pydantic's JSON serialisation, then re-load to ensure it's plain dict
+    return JSONResponse(json.loads(report.json()))
 
 
-@app.get("/history/{dataset_name}")
-def get_history(dataset_name: str) -> Dict[str, Any]:
-    try:
-        history = history_utils.load_history(dataset_name)
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No history found for dataset '{dataset_name}'.",
-        )
+@app.post("/autofix/clean")
+async def download_cleaned_dataset(
+    file: UploadFile = File(...),
+    options_json: str = Form("{}"),
+) -> StreamingResponse:
+    """
+    AutoFix 3.0: one-click cleaning.
 
-    return {"dataset_name": dataset_name, "history": history}
+    Accepts the original CSV plus optional options JSON and returns a cleaned CSV.
 
-
-@app.get("/autofix/{dataset_name}/{run_id}")
-def download_autofix_script(dataset_name: str, run_id: str):
-    from fastapi.responses import Response
-
-    if not hasattr(autofix, "load_autofix_script"):
-        raise HTTPException(
-            status_code=404,
-            detail="AutoFix script loader not configured.",
-        )
+    Example form data:
+      - file: <csv file>
+      - options_json: '{"fill_numeric_missing": true, "mask_pii": true}'
+    """
+    if not file:
+        raise HTTPException(status_code=400, detail="File is required")
 
     try:
-        script_text = autofix.load_autofix_script(dataset_name, run_id)  # type: ignore[attr-defined]
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail="AutoFix script not found for this dataset/run.",
-        )
+        options_data = json.loads(options_json or "{}")
+    except json.JSONDecodeError:
+        options_data = {}
 
-    return Response(
-        content=script_text,
-        media_type="text/x-python",
-        headers={
-            "Content-Disposition": f'attachment; filename="autofix_{dataset_name}_{run_id}.py"'
-        },
+    options = AutofixCleanOptions(**options_data)
+
+    df, dataset_name = _load_dataframe(file)
+    cleaned = _apply_autofix_clean(df, options)
+
+    csv_bytes = cleaned.to_csv(index=False).encode("utf-8")
+    buf = io.BytesIO(csv_bytes)
+    filename = f"autofixed_{dataset_name}.csv"
+
+    return StreamingResponse(
+        buf,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
