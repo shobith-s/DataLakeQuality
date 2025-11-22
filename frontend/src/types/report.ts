@@ -75,6 +75,32 @@ export interface ScoreBreakdown {
   [key: string]: any;
 }
 
+export interface SchemaTypeChange {
+  column: string;
+  before: string | null;
+  after: string | null;
+}
+
+export interface SchemaPIIInfo {
+  has_pii: boolean;
+  pii_types?: string[];
+}
+
+export interface SchemaPIIChange {
+  column: string;
+  before: SchemaPIIInfo;
+  after: SchemaPIIInfo;
+}
+
+export interface SchemaChanges {
+  status: string;
+  added_columns: string[];
+  removed_columns: string[];
+  type_changes: SchemaTypeChange[];
+  pii_changes: SchemaPIIChange[];
+  is_breaking: boolean;
+}
+
 export interface DataQualityReport {
   dataset_name: string;
   run_id: string;
@@ -109,6 +135,8 @@ export interface DataQualityReport {
 
   score_grade?: ScoreGrade;
   score_breakdown?: ScoreBreakdown;
+
+  schema_changes?: SchemaChanges;
 
   [key: string]: unknown;
 }

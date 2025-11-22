@@ -8,6 +8,7 @@ import PIIPanel from "./components/panels/PIIPanel";
 import AutofixPanel from "./components/panels/AutofixPanel";
 import HistoryPanel from "./components/panels/HistoryPanel";
 import RawReportPanel from "./components/panels/RawReportPanel";
+import SchemaChangesPanel from "./components/panels/SchemaChangesPanel";
 
 import type { DataQualityReport } from "./types/report";
 
@@ -96,7 +97,7 @@ const App: React.FC = () => {
           DataLakeQ – Data Quality Firewall
         </h1>
         <p style={{ margin: 0, fontSize: 14, color: "#aaa" }}>
-          Profiling · Drift · PII · Policy Engine · AutoFix · Alerts · History
+          Profiling · Drift · PII · Policy Engine · AutoFix · Alerts · History · Schema
         </p>
       </header>
 
@@ -173,6 +174,7 @@ const App: React.FC = () => {
             <ScoreCard report={report} />
             <PolicyGate report={report} />
             <DatasetSummaryPanel report={report} />
+            <SchemaChangesPanel report={report} />
             <PIIPanel report={report} />
             <AlertsPanel alerts={report.alerts} />
           </div>
@@ -188,8 +190,9 @@ const App: React.FC = () => {
 
       {!report && !loading && (
         <p style={{ fontSize: 13, color: "#777", marginTop: 8 }}>
-          Upload a CSV and run the data quality check to see score, alerts,
-          policy verdict, summary, AutoFix script, and history snapshot.
+          Upload a CSV and run the data quality check to see score, schema
+          baseline diff, alerts, policy verdict, summary, AutoFix script, and
+          history snapshot.
         </p>
       )}
     </div>
