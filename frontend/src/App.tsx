@@ -85,117 +85,213 @@ const App: React.FC = () => {
     <div
       style={{
         minHeight: "100vh",
-        background: "#050509",
+        background: "radial-gradient(circle at top, #101420 0, #050509 55%, #020207 100%)",
         color: "#f5f5f5",
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-        padding: 16,
+        fontFamily:
+          "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       }}
     >
-      {/* Header */}
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 24 }}>
-          DataLakeQ – Data Quality Firewall
-        </h1>
-        <p style={{ margin: 0, fontSize: 14, color: "#aaa" }}>
-          Profiling · Drift · PII · Policy Engine · AutoFix · Alerts · History ·
-          Schema
-        </p>
-      </header>
-
-      {/* Upload + Actions */}
-      <section
+      <div
         style={{
-          border: "1px solid #333",
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 16,
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          flexWrap: "wrap",
-          background: "#060612",
+          maxWidth: 1200,
+          margin: "0 auto",
+          padding: "16px 16px 32px",
         }}
       >
-        <input
-          type="file"
-          accept=".csv"
-          onChange={handleFileChange}
-          style={{ fontSize: 14 }}
-        />
-        <button
-          onClick={handleAnalyze}
-          disabled={!file || loading}
+        {/* Header */}
+        <header
           style={{
-            padding: "6px 14px",
-            borderRadius: 6,
-            border: "1px solid #555",
-            background: loading ? "#222" : "#1e88e5",
-            color: "#fff",
-            cursor: loading ? "default" : "pointer",
-            fontSize: 14,
+            marginBottom: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
           }}
         >
-          {loading ? "Analyzing..." : "Run Data Quality Check"}
-        </button>
-        {file && (
-          <span style={{ fontSize: 12, color: "#ccc" }}>
-            Selected: {file.name}
-          </span>
-        )}
-      </section>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 24 }}>
+              DataLakeQ – Data Quality Firewall
+            </h1>
+            <p style={{ margin: 0, fontSize: 13, color: "#aaa" }}>
+              Profiling · Drift · PII · Policy Engine · AutoFix · Alerts ·
+              History · Schema
+            </p>
+          </div>
+          {report && (
+            <div
+              style={{
+                fontSize: 12,
+                color: "#9ea7ff",
+                textAlign: "right",
+              }}
+            >
+              <div style={{ opacity: 0.8 }}>Dataset:</div>
+              <div style={{ fontWeight: 600 }}>{report.dataset_name}</div>
+            </div>
+          )}
+        </header>
 
-      {/* Error state */}
-      {error && (
+        {/* Upload + Actions */}
         <section
           style={{
-            border: "1px solid #552222",
-            background: "#220707",
-            color: "#ffb3b3",
-            borderRadius: 8,
+            borderRadius: 10,
             padding: 12,
-            marginBottom: 16,
+            marginBottom: 20,
+            background: "rgba(9, 11, 22, 0.9)",
+            border: "1px solid rgba(70, 80, 140, 0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
           }}
         >
-          <strong>Error:</strong> {error}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileChange}
+              style={{
+                fontSize: 13,
+                padding: "4px",
+                borderRadius: 6,
+                border: "1px solid #333",
+                background: "#050509",
+              }}
+            />
+            <button
+              onClick={handleAnalyze}
+              disabled={!file || loading}
+              style={{
+                padding: "7px 16px",
+                borderRadius: 999,
+                border: "none",
+                background: loading ? "#283046" : "#4169e1",
+                color: "#fff",
+                cursor: !file || loading ? "default" : "pointer",
+                fontSize: 13,
+                fontWeight: 500,
+                boxShadow: loading
+                  ? "none"
+                  : "0 0 0 1px rgba(65,105,225,0.5), 0 10px 24px rgba(0,0,0,0.4)",
+                transition: "background 0.15s ease",
+              }}
+            >
+              {loading ? "Analyzing…" : "Run Data Quality Check"}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "#bbb" }}>
+            {file ? (
+              <>
+                Selected:{" "}
+                <span style={{ color: "#fff", fontWeight: 500 }}>
+                  {file.name}
+                </span>
+              </>
+            ) : (
+              "Upload a CSV to start."
+            )}
+          </div>
         </section>
-      )}
 
-      {/* Main content */}
-      {report && (
-        <main
-          style={{
-            display: "grid",
-            gridTemplateColumns: "2fr 1.5fr",
-            gap: 16,
-            alignItems: "flex-start",
-          }}
-        >
-          {/* Left column */}
-          <div>
-            <ScoreCard report={report} />
-            <PolicyGate report={report} />
-            <DatasetSummaryPanel report={report} />
-            <SchemaChangesPanel report={report} />
-            <PIIPanel report={report} />
-            <AlertsPanel alerts={report.alerts} />
-          </div>
+        {/* Error state */}
+        {error && (
+          <section
+            style={{
+              borderRadius: 10,
+              padding: 10,
+              marginBottom: 18,
+              background: "#220707",
+              border: "1px solid #552222",
+              color: "#ffb3b3",
+              fontSize: 13,
+            }}
+          >
+            <strong>Error:</strong> {error}
+          </section>
+        )}
 
-          {/* Right column */}
-          <div>
-            <AutofixPanel report={report} onDownload={handleDownloadAutofix} />
-            <HistoryPanel report={report} />
-            <RawReportPanel report={report} />
-          </div>
-        </main>
-      )}
+        {/* Empty state */}
+        {!report && !loading && (
+          <p
+            style={{
+              fontSize: 13,
+              color: "#888",
+              marginTop: 8,
+            }}
+          >
+            Once you run a check, you’ll see **score, schema changes, PII,
+            AutoFix plan, alerts, and history** laid out in a clean dashboard
+            below.
+          </p>
+        )}
 
-      {!report && !loading && (
-        <p style={{ fontSize: 13, color: "#777", marginTop: 8 }}>
-          Upload a CSV and run the data quality check to see score, schema
-          baseline diff, alerts, policy verdict, summary, AutoFix script, and
-          history snapshot.
-        </p>
-      )}
+        {/* Main dashboard */}
+        {report && (
+          <main
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+            }}
+          >
+            {/* Row 1 – core metrics: score, policy, history */}
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(260px, minmax(0, 1fr)))",
+                gap: 16,
+              }}
+            >
+              <ScoreCard report={report} />
+              <PolicyGate report={report} />
+              <HistoryPanel report={report} />
+            </section>
+
+            {/* Row 2 – dataset / schema / PII vs AutoFix */}
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1.6fr)",
+                gap: 16,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <DatasetSummaryPanel report={report} />
+                <SchemaChangesPanel report={report} />
+                <PIIPanel report={report} />
+              </div>
+
+              <div>
+                <AutofixPanel
+                  report={report}
+                  onDownload={handleDownloadAutofix}
+                />
+              </div>
+            </section>
+
+            {/* Row 3 – alerts & raw JSON */}
+            <section
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.8fr)",
+                gap: 16,
+                alignItems: "stretch",
+              }}
+            >
+              <AlertsPanel alerts={report.alerts} />
+              <RawReportPanel report={report} />
+            </section>
+          </main>
+        )}
+      </div>
     </div>
   );
 };
