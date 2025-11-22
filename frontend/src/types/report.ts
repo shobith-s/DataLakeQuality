@@ -1,55 +1,16 @@
-// frontend/src/types/report.ts
-
-export type AlertLevel = "error" | "warning" | "info";
-
-export interface Alert {
-  level: AlertLevel;
-  code: string;
-  message: string;
-}
-
 export interface Summary {
   row_count: number;
   column_count: number;
   total_missing_cells: number;
   missing_ratio: number;
-  duplicate_rows?: number;
-  duplicate_ratio?: number;
+  duplicate_rows: number;
+  duplicate_ratio: number;
 }
 
 export interface BasicProfile {
-  missing_by_column?: Record<string, number>;
-  inferred_types?: Record<string, string>;
-  column_stats?: Record<string, any>;
-}
-
-export interface ColumnProfile {
-  name?: string;
-  column?: string;
-  dtype?: string;
-  missing_ratio?: number;
-  outlier_ratio?: number;
-  pii_type?: string | null;
-  drift_severity?: string | null;
-  psi?: number | null;
-  [key: string]: any;
-}
-
-export interface PolicyFailure {
-  code: string;
-  message: string;
-}
-
-export interface HistoryPoint {
-  timestamp: string;
-  overall_score?: number;
-  missing_ratio?: number;
-  outlier_ratio?: number;
-}
-
-export interface HistorySnapshot {
-  points: HistoryPoint[];
-  [key: string]: unknown;
+  missing_by_column: Record<string, number>;
+  inferred_types: Record<string, string>;
+  column_stats: Record<string, any>;
 }
 
 export interface PiiColumn {
@@ -57,65 +18,37 @@ export interface PiiColumn {
   detected_types: string[];
 }
 
-export interface ScoreGrade {
-  letter: string;
-  label: string;
-  reason?: string;
-}
-
-export interface ScoreBreakdown {
-  base?: number;
-  penalty_missing?: number;
-  penalty_outliers?: number;
-  penalty_duplicates?: number;
-  penalty_pii?: number;
-  penalty_drift?: number;
-  total_penalty?: number;
-  final_score?: number;
-  [key: string]: any;
-}
-
-export interface SchemaTypeChange {
+export interface ColumnOutlierProfile {
   column: string;
-  before: string | null;
-  after: string | null;
+  mean?: number | null;
+  std?: number | null;
+  outlier_count: number;
+  value_count: number;
+  outlier_ratio: number;
+  severity: string;
 }
 
-export interface SchemaPIIInfo {
-  has_pii: boolean;
-  pii_types?: string[];
+export interface HistoryPoint {
+  timestamp: string;
+  score: number;
+  missing_ratio: number;
+  outlier_ratio: number;
 }
 
-export interface SchemaPIIChange {
-  column: string;
-  before: SchemaPIIInfo;
-  after: SchemaPIIInfo;
+export interface HistorySnapshot {
+  points: HistoryPoint[];
 }
 
-export interface SchemaChanges {
-  status: string;
-  added_columns: string[];
-  removed_columns: string[];
-  type_changes: SchemaTypeChange[];
-  pii_changes: SchemaPIIChange[];
-  is_breaking: boolean;
+export interface AlertItem {
+  level?: string;
+  code?: string;
+  message?: string;
 }
 
-/* --- AutoFix --- */
-
-export interface AutofixStep {
-  id: string;
-  label: string;
+export interface InsightItem {
   category: string;
-  enabled: boolean;
-  description?: string;
-  code: string;
-}
-
-export interface AutofixPlan {
-  header: string;
-  footer: string;
-  steps: AutofixStep[];
+  severity: string;
+  message: string;
 }
 
 export interface DataQualityReport {
@@ -123,37 +56,33 @@ export interface DataQualityReport {
   run_id: string;
   timestamp: string;
 
-  summary?: Summary;
-  basic_profile?: BasicProfile;
+  summary: Summary;
+  basic_profile: BasicProfile;
 
-  overall_score?: number;
+  pii_columns: PiiColumn[];
+  pii_column_count: number;
+  has_pii: boolean;
+
+  columns: ColumnOutlierProfile[];
+  total_outliers: number;
+  total_numeric_values: number;
+  overall_outlier_ratio: number;
+
+  contract_suggestion: Record<string, any>;
+  policy_passed: boolean;
+  policy_failures: any[];
+
+  autofix_plan: any[];
+  autofix_script: string;
+
   missing_ratio: number;
   outlier_ratio: number;
-  duplicate_ratio?: number;
+  overall_score: number;
 
-  has_drift?: boolean;
-  psi_severity?: string | null;
+  history_snapshot: HistorySnapshot;
+  alerts: AlertItem[];
 
-  columns: ColumnProfile[];
-
-  pii_columns?: PiiColumn[];
-  pii_column_count?: number;
-  has_pii?: boolean;
-
-  policy_passed: boolean;
-  policy_failures: PolicyFailure[];
-
-  alerts: Alert[];
-
-  autofix_plan?: AutofixPlan | null;
-  autofix_script?: string | null;
-
-  history_snapshot?: HistorySnapshot;
-
-  score_grade?: ScoreGrade;
-  score_breakdown?: ScoreBreakdown;
-
-  schema_changes?: SchemaChanges;
-
-  [key: string]: unknown;
+  // NEW
+  insights?: InsightItem[];
+  contract_yaml?: string | null;
 }

@@ -1,4 +1,3 @@
-// frontend/src/App.tsx
 import React, { useState } from "react";
 import AlertsPanel from "./components/AlertsPanel";
 import ScoreCard from "./components/panels/ScoreCard";
@@ -9,7 +8,9 @@ import AutofixPanel from "./components/panels/AutofixPanel";
 import HistoryPanel from "./components/panels/HistoryPanel";
 import RawReportPanel from "./components/panels/RawReportPanel";
 import SchemaChangesPanel from "./components/panels/SchemaChangesPanel";
-import HeaderBar, { NavTabId } from "./components/layout/HeaderBar";
+import InsightsPanel from "./components/panels/InsightsPanel";
+import ContractPanel from "./components/panels/ContractPanel";
+import HeaderBar, { type NavTabId } from "./components/layout/HeaderBar";
 
 import type { DataQualityReport } from "./types/report";
 import { dlqColors, dlqTypography } from "./ui/theme";
@@ -68,7 +69,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadAutofix = (script: string | undefined) => {
+  const handleDownloadAutofixScript = (script: string | undefined) => {
     if (!report || !script) return;
 
     const blob = new Blob([script], {
@@ -87,6 +88,44 @@ const App: React.FC = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadCleanCsv = async () => {
+    if (!file) {
+      alert("Upload a CSV and run a check first.");
+      return;
+    }
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("options_json", JSON.stringify({}));
+
+      const res = await fetch("http://localhost:8000/autofix/clean", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(
+          `AutoFix clean error (${res.status}): ${text || res.statusText}`
+        );
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const baseName = file.name.replace(/\.[^.]+$/, "");
+      a.href = url;
+      a.download = `autofixed_${baseName}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Failed to download cleaned CSV.");
+    }
   };
 
   const handleNavChange = (id: NavTabId) => {
@@ -163,8 +202,8 @@ const App: React.FC = () => {
               marginBottom: 8,
             }}
           >
-            Once you run a check, you’ll see score, schema changes, PII,
-            AutoFix plan, alerts, and history laid out in the dashboard below.
+            Once you run a check, you’ll see score, AI insights, schema changes,
+            PII, AutoFix plan, alerts, and history in the dashboard below.
           </p>
         )}
 
@@ -177,7 +216,7 @@ const App: React.FC = () => {
               gap: 16,
             }}
           >
-            {/* Row 1 – Score (left) + Policy (right) */}
+            {/* Row 1 – Score + Insights (left) / Policy (right) */}
             <section
               style={{
                 display: "grid",
@@ -186,8 +225,12 @@ const App: React.FC = () => {
                 alignItems: "stretch",
               }}
             >
-              <div id="section-profiling">
+              <div
+                id="section-profiling"
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              >
                 <ScoreCard report={report} />
+                <InsightsPanel report={report} />
               </div>
 
               <div id="section-policy">
@@ -200,7 +243,7 @@ const App: React.FC = () => {
               <HistoryPanel report={report} />
             </section>
 
-            {/* Row 2 – Left: Dataset + Schema, Right: PII */}
+            {/* Row 2 – Left: Dataset + Schema + Contract, Right: PII */}
             <section
               style={{
                 display: "grid",
@@ -220,6 +263,7 @@ const App: React.FC = () => {
                 <div id="section-schema">
                   <SchemaChangesPanel report={report} />
                 </div>
+                <ContractPanel report={report} />
               </div>
 
               <div id="section-pii">
@@ -239,7 +283,8 @@ const App: React.FC = () => {
               <div id="section-autofix">
                 <AutofixPanel
                   report={report}
-                  onDownload={handleDownloadAutofix}
+                  onDownload={handleDownloadAutofixScript}
+                  onDownloadCleanCsv={handleDownloadCleanCsv}
                 />
               </div>
 

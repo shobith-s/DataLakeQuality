@@ -1,4 +1,3 @@
-// frontend/src/components/panels/AutofixPanel.tsx
 import React, { useState } from "react";
 import type { DataQualityReport } from "../../types/report";
 import Card from "../../ui/Card";
@@ -9,9 +8,14 @@ import { dlqColors } from "../../ui/theme";
 interface Props {
   report: DataQualityReport;
   onDownload: (script: string | undefined) => void;
+  onDownloadCleanCsv: () => void;
 }
 
-const AutofixPanel: React.FC<Props> = ({ report, onDownload }) => {
+const AutofixPanel: React.FC<Props> = ({
+  report,
+  onDownload,
+  onDownloadCleanCsv,
+}) => {
   const plan = report.autofix_plan || [];
   const script = report.autofix_script || "";
 
@@ -25,32 +29,59 @@ const AutofixPanel: React.FC<Props> = ({ report, onDownload }) => {
     onDownload(script);
   };
 
+  const handleDownloadClean = () => {
+    onDownloadCleanCsv();
+  };
+
   return (
     <Card
       title="AutoFix Script"
-      subtitle="Automatically generated cleaning pipeline you can run as a standalone Python script"
+      subtitle="Automatically generated cleaning pipeline you can run as a standalone Python script or as a one-click cleaned CSV."
       variant="soft"
       rightNode={
-        <button
-          type="button"
-          onClick={handleDownloadClick}
-          disabled={!hasScript}
+        <div
           style={{
-            padding: "6px 12px",
-            borderRadius: 999,
-            border: "none",
-            backgroundColor: hasScript ? "#4f46e5" : "#2d3248",
-            color: "#fff",
-            cursor: hasScript ? "pointer" : "default",
-            fontSize: 12,
-            fontWeight: 500,
-            boxShadow: hasScript
-              ? "0 0 0 1px rgba(129,140,248,0.70), 0 14px 30px rgba(0,0,0,0.75)"
-              : "none",
+            display: "flex",
+            gap: 8,
           }}
         >
-          Download .py
-        </button>
+          <button
+            type="button"
+            onClick={handleDownloadClean}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 999,
+              border: "none",
+              backgroundColor: "#22c55e",
+              color: "#020617",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 500,
+            }}
+          >
+            Download cleaned CSV
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadClick}
+            disabled={!hasScript}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 999,
+              border: "none",
+              backgroundColor: hasScript ? "#4f46e5" : "#2d3248",
+              color: "#fff",
+              cursor: hasScript ? "pointer" : "default",
+              fontSize: 12,
+              fontWeight: 500,
+              boxShadow: hasScript
+                ? "0 0 0 1px rgba(129,140,248,0.70), 0 14px 30px rgba(0,0,0,0.75)"
+                : "none",
+            }}
+          >
+            Download .py
+          </button>
+        </div>
       }
     >
       <div
@@ -75,8 +106,8 @@ const AutofixPanel: React.FC<Props> = ({ report, onDownload }) => {
             <>
               <Badge tone="info">Generated</Badge>
               <span>
-                This script was generated from current profiling results. You
-                can edit steps or disable ones you don't need.
+                AutoFix can either generate a Python script or give you a
+                one-click cleaned CSV ready for downstream use.
               </span>
             </>
           ) : (
